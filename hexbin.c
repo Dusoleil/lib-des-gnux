@@ -11,16 +11,12 @@
 int main()
 {
     uint8_t b;
-    char ip[3] = {0};
 
     while (1)
     {
-        fread(ip, 1, 2, stdin);
-
+        scanf("%hhx", &b);
         if (feof(stdin))
             break;
-
-        sscanf(ip, "%hhx", &b);
         fwrite(&b, 1, 1, stdout);
     }
 

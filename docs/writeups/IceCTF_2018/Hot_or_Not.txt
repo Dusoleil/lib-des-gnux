@@ -1,0 +1,617 @@
+"According to my friend Zuck, the first step on the path to great power is to
+rate the relative hotness of stuff... think Hot or Not."
+
+
+Setup
+-----
+We are provided a JPEG image.
+
+hotornot.jpg shows the original in its entirety, with the caviot that this one
+is scaled WAY down and compressed more heavily.  The actual original is very
+large (19488x19488, 69 MB).
+
+hotornot_detail.jpg shows a small detailed portion of the original image.  We
+can see that the original is made up of a grid of images, either pictures of
+hotdogs or pictures of dogs.
+
+
+Ideas
+-----
+This was a steganography task.  As with tasks like this we first try the usual
+cheap searching techniques,  strings, binwalk, and hexdump to look for anything
+that sticks out.  Once reasonably sure there was nothing there, we moved on to
+the image data.
+
+The original image, as stated before, is a grid of embedded images.  Each one
+measured to be 224x224 pixels.  The entire image is 19488x19488, which means it
+is 87 embedded images across and 87 tall.
+
+Given the state of things and the clues dropped in the task title and
+description, we were fairly confident in guessing this was a game of
+hotdog-notdog.
+
+This comes from an episode of the HBO show "Silicon Valley", where one of the
+characters designs a mobile app which can identify food.  In reality, it can
+only identify hotdogs and will otherwise report that the picture is *not* of a
+hotdog.  Today I learned that this is actually a real thing, with a trained AI
+and public API on the internet.  As I'm going back and writing this up, I can't
+find the website we used anymore.  But here's the API from my script
+"https://api.deepai.org/hot_dog_or_not".  Hit that with a POST to have an image
+analyzed (as we will see below).
+
+With a plan formulating, we are theorizing on what the hotdog-notdog results
+will mean.  We want to try interpreting the results as bits, packing every 8
+into a byte, and reading the resulting stream.  Otherwise, we will try
+overlaying the results back on the original image to see if a visual pattern
+emerges.
+
+
+Solution
+--------
+
+# Image Analysis
+Starting with our original image above, we want to offload the analysis of each
+embedded image to the API we found.  As a convention, I will be refering to
+these embedded images as cells.
+
+The first step was extracting each cell into its own image file.  For this I
+wrote a C program utilizing libjpeg (See Appendix A).  This left us with a
+directory of files "imgXxY.jpg", where X and Y are the corresponding row and
+column of the cell in grid-space [0, 87).
+
+The website we found the AI engine on had some minimal documentation on its API
+and left us with a curl command to interact with it.  It just takes a POST
+passing it the URL to an image to analyze.
+
+curl -X POST -d '{"img_url": "http://..."}' https://api.deepai.org/hot_dog_or_not
+
+Note that it takes images by URL when using the API.  So we had to host the
+images somewhere.  I just resorted to our trusty internal server and opened the
+firewall gates!
+
+To automate the process of calling the API with each image, the following
+scripts were written.  The first Python script just procedurally generates all
+the filenames of all the cell images.  The second Bash script takes each name,
+plugs it into a full URL and makes the curl call, writing the results to a
+image-specific text file.
+
+#!/usr/bin/env python
+for row in range(87):
+    for col in range(87):
+        print(f"img{row}x{col}.jpg")
+
+#!/bin/bash -e
+
+# Read names off stdin, tell deepai to check it out from host #
+while read name; do
+    URL="{\"img_url\":\"http://<REDACTED>/cells/$name\"}"
+    curl -X POST -d $URL 'https://api.deepai.org/hot_dog_or_not' >results/$name.txt
+done
+
+We now have a directory of imgXxY.jpg files and another of imgXxY.jpg.txt files.
+Each text file contains the analysis result of its corresponding cell image file.
+The contents of the text files looks like this:
+
+{"is_hot_dog": "hot dog"}
+
+in the case of a hotdog, and
+
+{"is_hot_dog": "not hot dog"}
+
+in the case of a notdog.  So, we can check one by searching it for the word
+"not".
+
+
+# Interpreting Data
+We first tried inspecting the bitstream which resulted from image analysis.
+Calling each hotdog a 1 and each notdog a 0 and packing each 8 into a byte, no
+recognizable data can be found in the resulting bitstream.  The same happens
+when calling hotdogs 0 and vice-virsa.  We know that there are some false
+results back from the AI, but were assuming that the data would be more-or-less
+kinda readable as a starting point.
+
+Moving on to an image overlay.  We produce a copy of the original image, with
+each hotdog covered with white pixels and each notdog covered with black pixels
+(see Appendix B).  No patterns initially jumped out, but after a while of
+studying I started to think I was seeing a QR code in the noise.  We both
+confirmed some characteristics of the image to gauge the likelyhood of this and
+decided to presue it.
+
+
+## QR Code
+'hotornot_initial_overlay.jpg' shows our initial image overlay.  The cell
+resolution is still 87x87, which is not a valid code according to the standard.
+We noticed that the original image happened to always contain hotdog and notdog
+images in clusters of 3x3 cells, which was really useful for two reasons.  First,
+this gave us a way to weed-out some false results from the AI, just group cells
+together and produce a cluster based on the majority result.  Second, once we
+scaled-down our image by replacing cells with clusters, we have an image which
+is 29x29 clusters, and this *is* a valid code version as described in the
+standard.  It's version 3.
+
+We regenerated our QR code using a cluster-oriented approach (See Appendix C).
+We also inverted the colors since we noticed a few things that didn't quite make
+sense in the original.  This produced 'hotornot_refined_overlay.jpg'.  This is
+still not a valid QR code as it is missing the large markers in the corners and
+a few pixels are still malformed according to the version 3 standard.  In
+particular, this included some alternating patterns along the top and left-hand
+side, as well as the small square marker towards the bottom-right.  We suspect
+these subtle remaining flaws were unintended by the problem designers, since we
+can see what images we expect back in the original.  It was probably just
+unlucky bad results from the AI.
+
+We fixed up the small errors and manually drew in the large corner markers.
+This produced 'hotornot_final_overlay.png'.  Upon scanning this image with a QR
+code reader, we finally recovered the flag.
+
+IceCTF{h0td1gg1tyd0g}
+
+
+== Appendices ==
+=== Appendix A ===
+C code to split original image into cells
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <jpeglib.h>
+
+void write_cell(unsigned int matr, unsigned int matc,
+        unsigned char *buff, unsigned long fwid)
+{
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+
+    /* this is a pointer to one row of image data */
+    JSAMPROW row_pointer[1];
+
+    char fname[32];
+    sprintf(fname, "img%ix%i.jpg", matr, matc);
+
+    FILE *outfile = fopen(fname, "wb"); // res
+
+    if (!outfile)
+    {
+        fprintf(stderr, "Failed to open output file '%s'\n", fname);
+        return;
+    }
+
+    cinfo.err = jpeg_std_error( &jerr );
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, outfile);
+
+    /* Setting the parameters of the output file here */
+    cinfo.image_width = 224;
+    cinfo.image_height = 224;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    /* default compression parameters, we shouldn't be worried about these */
+    jpeg_set_defaults( &cinfo );
+    /* Now do the compression .. */
+    jpeg_start_compress( &cinfo, TRUE );
+
+
+    unsigned long row = matr * 224;
+    unsigned long col = matc * 224;
+
+    while (cinfo.next_scanline < cinfo.image_height)
+    {
+        unsigned long idx = (cinfo.next_scanline + row) * fwid * cinfo.input_components;
+        idx += col * cinfo.input_components;
+
+        row_pointer[0] = &buff[idx];
+        jpeg_write_scanlines(&cinfo, row_pointer, 1);
+    }
+
+
+    /* similar to read file, clean up after we're done compressing */
+    jpeg_finish_compress( &cinfo );
+    jpeg_destroy_compress( &cinfo );
+    fclose( outfile );
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2)
+    {
+        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+        return 1;
+    }
+
+    char *file = argv[1];
+
+    struct jpeg_decompress_struct jds;
+    struct jpeg_error_mgr err;
+
+    FILE *f;
+    f = fopen(file, "rb"); // res
+    if (!f)
+    {
+        fprintf(stderr, "Failed to open file\n");
+        return 1;
+    }
+
+    jds.err = jpeg_std_error(&err);
+    jpeg_create_decompress(&jds); // res
+    jpeg_stdio_src(&jds, f);
+    jpeg_read_header(&jds, TRUE);
+    jpeg_start_decompress(&jds);
+
+    unsigned long width = jds.output_width;
+    unsigned long height = jds.output_height;
+    unsigned char *buff = malloc(width * height * 3); // res
+    unsigned char *tmp[1];
+
+    if (!buff)
+    {
+        fprintf(stderr, "Could not allocate image buffer\n");
+        jpeg_finish_decompress(&jds);
+        return 1;
+    }
+
+    while (jds.output_scanline < height)
+    {
+        tmp[0] = buff + (3 * width * jds.output_scanline);
+        jpeg_read_scanlines(&jds, tmp, 1);
+    }
+
+    jpeg_finish_decompress(&jds);
+    jpeg_destroy_decompress(&jds);
+    fclose(f);
+
+
+    /* we have the img in memory now, write every 224x224
+     * block of pixels out to a matrix of files 'img0x0.jpg' */
+    unsigned int matr = 0;
+    unsigned int matc = 0;
+
+    printf("width:  %li\n", width);
+    printf("height: %li\n", height);
+
+    /* lines */
+    for (matr = 0; (matr * 224) < height; matr++)
+    {
+        /* cells */
+        for (matc = 0; (matc * 224) < width; matc++)
+            write_cell(matr, matc, buff, width);
+    }
+
+    printf("rows: %i\n", matr);
+    printf("cols: %i\n", matc);
+
+    free(buff);
+    return 0;
+}
+
+
+=== Appendix B ===
+C code to produce initial QR code image
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <jpeglib.h>
+
+void interpret_cell(unsigned int matr, unsigned int matc,
+        unsigned char *buff, unsigned long fwid)
+{
+    char results_file[32], line[64];
+    sprintf(results_file, "deepai/results/img%ix%i.jpg.txt", matr, matc);
+
+    FILE *rf = fopen(results_file, "r"); // res
+
+    if (!rf)
+    {
+        fprintf(stderr, "Failed to open results file '%s'\n", results_file);
+        return;
+    }
+
+    fgets(line, 64, rf);
+    char *not = strstr(line, "not");
+
+    unsigned long height = 224;
+    unsigned long width =  224;
+    unsigned char *linebuff = malloc(3 * width); // res
+
+    if (!linebuff)
+    {
+        fprintf(stderr, "Failed to allocate result tmp buffer\n");
+        fclose(rf);
+        return;
+    }
+
+    if (not)
+        memset(linebuff, 0, 3*width);
+    else
+        memset(linebuff, 255, 3*width);
+
+    unsigned long i;
+
+    unsigned long row = matr * 224;
+    unsigned long col = matc * 224;
+
+    for (i = 0; i < height; i++)
+    {
+        unsigned long idx = (i + row) * fwid * 3;
+        idx += col * 3;
+
+        unsigned char *ptr = &buff[idx];
+        memcpy(ptr, linebuff, 3*width);
+    }
+
+    free(linebuff);
+    fclose(rf);
+}
+
+void write_img(unsigned char *buff, unsigned long width, unsigned long height)
+{
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+
+    /* this is a pointer to one row of image data */
+    JSAMPROW row_pointer[1];
+
+    char fname[32];
+    sprintf(fname, "myoutput.jpg");
+
+    FILE *outfile = fopen(fname, "wb"); // res
+
+    if (!outfile)
+    {
+        fprintf(stderr, "Failed to open output file '%s'\n", fname);
+        return;
+    }
+
+    cinfo.err = jpeg_std_error( &jerr );
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, outfile);
+
+    /* Setting the parameters of the output file here */
+    cinfo.image_width = width;
+    cinfo.image_height = height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    /* default compression parameters, we shouldn't be worried about these */
+    jpeg_set_defaults( &cinfo );
+    /* Now do the compression .. */
+    jpeg_start_compress( &cinfo, TRUE );
+
+
+    while (cinfo.next_scanline < cinfo.image_height)
+    {
+        row_pointer[0] = &buff[cinfo.next_scanline * width * cinfo.input_components];
+        jpeg_write_scanlines(&cinfo, row_pointer, 1);
+    }
+
+
+    /* similar to read file, clean up after we're done compressing */
+    jpeg_finish_compress( &cinfo );
+    jpeg_destroy_compress( &cinfo );
+    fclose( outfile );
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2)
+    {
+        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+        return 1;
+    }
+
+    char *file = argv[1];
+
+    struct jpeg_decompress_struct jds;
+    struct jpeg_error_mgr err;
+
+    FILE *f;
+    f = fopen(file, "rb"); // res
+    if (!f)
+    {
+        fprintf(stderr, "Failed to open file\n");
+        return 1;
+    }
+
+    jds.err = jpeg_std_error(&err);
+    jpeg_create_decompress(&jds); // res
+    jpeg_stdio_src(&jds, f);
+    jpeg_read_header(&jds, TRUE);
+    jpeg_start_decompress(&jds);
+
+    unsigned long width = jds.output_width;
+    unsigned long height = jds.output_height;
+    unsigned char *buff = malloc(width * height * 3); // res
+    unsigned char *tmp[1];
+
+    if (!buff)
+    {
+        fprintf(stderr, "Could not allocate image buffer\n");
+        jpeg_finish_decompress(&jds);
+        return 1;
+    }
+
+    while (jds.output_scanline < height)
+    {
+        tmp[0] = buff + (3 * width * jds.output_scanline);
+        jpeg_read_scanlines(&jds, tmp, 1);
+    }
+
+    jpeg_finish_decompress(&jds);
+    jpeg_destroy_decompress(&jds);
+    fclose(f);
+
+
+    unsigned int matr = 0;
+    unsigned int matc = 0;
+
+    printf("width:  %li\n", width);
+    printf("height: %li\n", height);
+
+    /* lines */
+    for (matr = 0; (matr * 224) < height; matr++)
+    {
+        /* cells */
+        for (matc = 0; (matc * 224) < width; matc++)
+            interpret_cell(matr, matc, buff, width);
+    }
+
+    printf("rows: %i\n", matr);
+    printf("cols: %i\n", matc);
+
+    write_img(buff, width, height);
+
+    free(buff);
+    return 0;
+}
+
+
+=== Appendix C ===
+C code to produce clustered QR code image.  We switched to PNG format to
+eliminate JPEG compression artifacts.  This program also writes an image that is
+1 pixel per cluster, to aid manual editing.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define PNG_DEBUG 3
+#include <png.h>
+
+#define OUT_DIM 29
+#define IMG_LEN ((OUT_DIM*OUT_DIM)/8)
+#define ORIG_DIM 87
+
+#define FILE_NAME "myoutput.png"
+
+unsigned int get_px_idx(unsigned int wid, unsigned int row,
+        unsigned int col)
+{
+    return (row*wid) + col;
+}
+
+/* transform from cluster-space into cell-space */
+unsigned int get_cell_output_px_idx(unsigned cell_row,
+        unsigned cell_col)
+{
+    return get_px_idx(OUT_DIM, cell_row/3, cell_col/3);
+}
+
+void write_image(unsigned char *buff)
+{
+    png_structp png_ptr;
+    png_infop info_ptr;
+
+        /* create file */
+        FILE *fp = fopen(FILE_NAME, "wb");
+        if (!fp)
+                printf("[write_png_file] File %s could not be opened for writing", FILE_NAME);
+
+
+        /* initialize stuff */
+        png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+        if (!png_ptr)
+                printf("[write_png_file] png_create_write_struct failed");
+
+        info_ptr = png_create_info_struct(png_ptr);
+        if (!info_ptr)
+                printf("[write_png_file] png_create_info_struct failed");
+
+        if (setjmp(png_jmpbuf(png_ptr)))
+                printf("[write_png_file] Error during init_io");
+
+        png_init_io(png_ptr, fp);
+
+
+        /* write header */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                printf("[write_png_file] Error during writing header");
+
+        png_set_IHDR(png_ptr, info_ptr, OUT_DIM, OUT_DIM,
+                     8, PNG_COLOR_TYPE_GRAY, PNG_INTERLACE_NONE,
+                     PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+
+        png_write_info(png_ptr, info_ptr);
+
+
+        /* write bytes */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                printf("[write_png_file] Error during writing bytes");
+
+        unsigned int row;
+        for (row=0; row < OUT_DIM; row++)
+            png_write_row(png_ptr, &buff[get_px_idx(OUT_DIM, row, 0)]);
+
+        //png_write_image(png_ptr, &buff);
+
+
+        /* end write */
+        if (setjmp(png_jmpbuf(png_ptr)))
+                printf("[write_png_file] Error during end of write");
+
+        png_write_end(png_ptr, NULL);
+
+        fclose(fp);
+}
+
+int interpret_cell(unsigned int cell_row, unsigned int cell_col)
+{
+    char fname[32], line[64];
+
+    snprintf(fname, 32, "deepai/results/img%ix%i.jpg.txt",
+            cell_row, cell_col);
+
+    FILE *f = fopen(fname, "r");
+    if (!f)
+    {
+        fprintf(stderr, "Failed to open result file '%s'\n", fname);
+        return 0;
+    }
+
+    fgets(line, 64, f);
+    char *not = strstr(line, "not");
+    fclose(f);
+
+    return not == NULL;
+}
+
+int main()
+{
+    /* output image information */
+    unsigned char *outbuff = malloc(OUT_DIM*OUT_DIM);
+    memset(outbuff, 0, OUT_DIM*OUT_DIM);
+
+
+    /* iterate original cells (not clusters) */
+    unsigned int cell_row, cell_col;
+
+    for (cell_row = 0; cell_row < ORIG_DIM; cell_row++)
+    {
+        for (cell_col = 0; cell_col < ORIG_DIM; cell_col++)
+        {
+            int res = interpret_cell(cell_row, cell_col);
+            outbuff[get_cell_output_px_idx(cell_row, cell_col)] += res;
+        }
+    }
+
+
+    /* counts to colors */
+    unsigned int r, c;
+
+    for (r = 0 ; r < OUT_DIM; r++)
+    {
+        for (c = 0; c < OUT_DIM; c++)
+        {
+            unsigned int idx = get_px_idx(OUT_DIM, r, c);
+            if (outbuff[idx] >= 5)
+                outbuff[idx] = 0;
+            else
+                outbuff[idx] = 255;
+        }
+    }
+
+
+    /* write image */
+    write_image(outbuff);
+
+    free(outbuff);
+    return 0;
+}

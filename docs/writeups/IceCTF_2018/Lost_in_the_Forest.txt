@@ -1,0 +1,66 @@
+"You've rooted a notable hacker's system and you're sure that he has hidden
+something juicy on there. Can you find his secret?"
+
+
+Setup
+-----
+We are given a zip file, which contains a backup of the hacker's filesystem.
+
+
+Solution
+--------
+A quick search shows nothing of interest outside of /home.  However, inspecting
+/home show a Pictures directory with several files named like "..._500.jpg",
+perhaps something to pay attention to.  In addition, Desktop/ contains a
+clue.png file.  If you spend much time studying these files you'll not turn up
+any leads, as the real file of interest is the mysterious "hzpxbsklqvboyou" file
+in the home directory.
+
+There's no obvious way to make sense of this file.  All of our real clues will
+come from the hacker's .bash_history file.  The history file is mostly junk, but
+these few lines are significant:
+
+wget https://gist.githubusercontent.com/Glitch-is/bc49ee73e5413f3081e5bcf5c1537e78/raw/c1f735f7eb36a20cb46b9841916d73017b5e46a3/eRkjLlksZp
+mv eRkjLlksZp tool.py
+./tool.py ../secret > ../hzpxbsklqvboyou
+shred secret
+rm tool.py
+
+This explains where our "hzpxbsklqvboyou" file came from as well as what
+happened to the original secret.
+
+If you download the sourced Python script, you'll get this:
+
+#!/usr/bin/python3
+import sys
+import base64
+
+def encode(filename):
+    with open(filename, "r") as f:
+        s = f.readline().strip()
+        return base64.b64encode((''.join([chr(ord(s[x])+([5,-1,3,-3,2,15,-6,3,9,1,-3,-5,3,-15] * 3)[x]) for x in range(len(s))])).encode('utf-8')).decode('utf-8')[::-1]*5
+
+if __name__ == "__main__":
+    print(encode(sys.argv[1]))
+
+It takes a filename on the command-line, reads the first line of that file, and
+applies several mutations to that text before printing it to stdout.
+
+Now we know how secret was encoded.  Reversing this code gives us the following
+function, which we can run over "hzpxbsklqvboyou" to recover the original secret.
+
+def decode(filename):
+    with open(filename, "r") as f:
+        s = f.readline().strip()
+        s = s[:int(len(s)/5)][::-1]
+        s = base64.b64decode(s)
+
+        lut = [5,-1,3,-3,2,15,-6,3,9,1,-3,-5,3,-15] * 3
+        s = (''.join( [chr( s[x] - lut[x]) for x in range(len(s))]))
+
+        return s
+
+if __name__ == "__main__":
+    print(decode(sys.argv[1]))
+
+IceCTF{good_ol_history_lesson}

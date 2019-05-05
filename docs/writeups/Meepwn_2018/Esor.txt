@@ -1,0 +1,105 @@
+We are given source code for a python program.  This program is for a hosted
+encryption/decryption server running on a remote port.  The remote service is
+running this program verbatim except that the flag is censored in our copy.
+
+Encrypt asks for a prefix and suffix and concatenates these around the flag
+(called secret).  This is what gets encrypted and hmac'd.  The encrypted blob is
+delivered to us, cool.  This part must be done on the remote server since it is
+the only one who knows the secret (flag).
+
+The decrypt function doesn't actually show the original plaintext to us, it just
+performs decryption in the background and reports whether the hmac is valid or
+not, so we cannot use the server.  Fortunately our client has access to all key
+and cipher algorithm information and can accept the data we just got from the
+server.
+
+We just need to modify our local copy to print() the plaintext during decryption
+verification.  When you run locally and attempt to decrypt the data returned by
+the server, you should see the flag surrounded by your prefix and suffix.  If
+you used empty strings for the prefix and suffix, then just the flag itself
+should appear.
+
+MeePwnCTF{pooDL3-this-is-la-vie-en-rose-P00dle!}
+
+--
+
+#!/usr/bin/python2
+from Crypto.Cipher import AES
+import hmac, hashlib
+import os
+import sys
+
+menu = """Choose one:
+1. encrypt data
+2. decrypt data
+3. quit
+"""
+
+class Unbuffered(object):
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, data):
+        self.stream.write(data)
+        self.stream.flush()
+    def __getattr__(self, attr):
+        return getattr(self.stream, attr)
+
+sys.stdout = Unbuffered(sys.stdout)
+sys.stderr = None
+
+encrypt_key = '\xff' * 32
+secret = 'MeePwnCTF{#flag_here#}'
+hmac_secret = ''
+blocksize = 16
+hmac_size = 20
+
+def pad(msg):
+	padlen = blocksize - (len(msg) % blocksize) - 1
+	return os.urandom(padlen) + chr(padlen)
+
+def unpad(msg):
+	return msg[:-(ord(msg[-1]) + 1)]
+
+def compute_hmac(msg):
+	return hmac.new(hmac_secret, msg, digestmod=hashlib.sha1).digest()
+
+def encrypt(prefix='', suffix=''):
+	_enc = prefix + secret + suffix
+	_enc+= compute_hmac(_enc)
+	_enc+= pad(_enc)
+	iv = os.urandom(16)
+	_aes = AES.new(encrypt_key, AES.MODE_CBC, iv)
+	return (iv + _aes.encrypt(_enc)).encode('hex')
+
+def decrypt(data):
+	data = data.decode('hex')
+	try:
+		iv = data[:blocksize]
+		_aes = AES.new(encrypt_key, AES.MODE_CBC, iv)
+		data = _aes.decrypt(data[blocksize:])
+		data = unpad(data)
+		plaintext = data[:-hmac_size]
+		mac = data[-hmac_size:]
+		if mac == compute_hmac(plaintext): return True
+		else: return False
+	except: return False
+
+print """Welcome to our super secure enc/dec server. 
+We use hmac, so, plz don't hack us (and you can't). Thanks."""
+
+while True:
+	choice = int(raw_input(menu))
+	if choice == 1:
+		_pre = raw_input('prefix: ')
+		_suf = raw_input('suffix: ')
+		print encrypt(prefix=_pre, suffix=_suf)
+	elif choice == 2:
+		_data = raw_input('data: ')
+		if decrypt(_data):
+			print 'OK'
+		else:
+			print 'KO'
+	elif choice == 3:
+		sys.exit(0)
+	else:
+		choice = int(raw_input(menu))

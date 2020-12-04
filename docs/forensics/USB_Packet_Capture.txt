@@ -1,0 +1,27 @@
+Keyboards
+=========
+
+To disect what a keyboard was typing from a USB pcap file, refer to the
+"Leftover Capture Data" (as Wireshark calls it).  This field will contain
+bytes describing pressed keys (scancodes), including modifier keys.
+
+At the time of writing this, my understanding of the data format is still a
+little limited.  So, this is just what I know.  Update it, over time.
+
+First byte of Leftover Data will contain any modifier keys.  I've seen 0x20 and
+0x02 both mean Shift (perhaps one is left and one is right).
+
+Starting 3 bytes in to the data (that is, offset 2), there will be codes for any
+other pressed keys.  Their meanings are in the table below.  You may see multiple
+bytes here.  As best I can tell, these are just multiple keys being pressed at
+the same time.
+
+Note that when keys are released, there will be a packet with zero bytes, which
+tell the host that there are no keys being pressed.
+
+Code Table
+Byte value      Unshifted       Shifted
+---------------------------------------
+
+
+# TODO - https://www.youtube.com/watch?v=0HXL4RGmExo

@@ -1,0 +1,14 @@
+CMP subtracts operands and sets internal flags.  Among these, it sets the
+zero flag if the difference is zero (operands are equal).
+
+TEST sets the zero flag (ZF) when the result of the AND operation is zero.  If
+the two operands are equal, their bitwise AND is zero only when the operands
+themselves are zero.  TEST also sets the sign flag (SF) when the most
+significant bit is set in the result, and the parity flag (PF) when the number
+of set bits is even.
+
+JE (alias of JZ) tests the zero flag and jumps if it is set.  This makes:
+test eax, eax
+je 0x1234
+equivalent to the C statement:
+if (eax == 0)

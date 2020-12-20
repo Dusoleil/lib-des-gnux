@@ -8,3 +8,5 @@ PicoCTF 2018                        18060       242    /10648   (10648)
 
 AngstromCTF 2019                    770         191    /1329    (1570)
 CSA CTF 2019                        1326        43     /363     (???)
+
+Metasploit Community CTF 2020       1600        41     /413     (???)

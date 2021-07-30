@@ -1,0 +1,29 @@
+Just some things to consider when crafting a pwn payload...
+
+
+Notes
+-----
+* The functions documented here require: stdio.h, unistd.h
+* The terminator 'space' means any whitespace, newline, tab, etc.
+* '?' on an output terminator means it is only sometimes present, see notes.
+* See man 2/3 <function> for complete information
+
+
+[INPUT]
+
+Function    Arguments                               Return val              Input terminators       Output terminators  Source      Notes
+===================================================================================================================================================================================================
+gets        (char*)dest                             dest, NULL              '\n', EOF               '\0'                STDIN       No check for buffer overrun
+scanf(%s)   (char*)format, ...                      # matched items, EOF    space, maxlen, EOF      '\0'                STDIN       No check for buffer overrun
+fgets       (char*)dest, (int)size, (FILE*)src      dest, NULL              '\n', maxlen, EOF       '\n'? '\0'          src         Newline char stored into output if read
+read        (int)fd, (void*)dest, (size_t)size      # bytes read, -1        maxlen, EOF             [none]              fd          Binary IO, may read < size or follow-up input if available
+
+
+[OUTPUT]
+
+Function    Arguments                               Return val              Input terminators       Output terminators  Dest        Notes
+===================================================================================================================================================================================================
+puts        (char*)str                              >=0, EOF                '\0'                    '\n'                STDOUT      Extra newline char is always appended
+printf(%s)  (char*)format, ...                      # chars printed, <0     '\0'                    [none]              STDOUT      Output controlled by format string
+fputs       (char*)str, (FILE*)dest                 >=0, EOF                '\0'                    [none]              dest        Unlike puts(), does not append '\n'
+write       (int)fd, (void*)src, (size_t)size       # bytes written, -1     maxlen                  [none]              fd          Binary IO, may write < size under certain conditions

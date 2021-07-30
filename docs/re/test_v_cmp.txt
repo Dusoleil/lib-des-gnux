@@ -7,8 +7,11 @@ themselves are zero.  TEST also sets the sign flag (SF) when the most
 significant bit is set in the result, and the parity flag (PF) when the number
 of set bits is even.
 
-JE (alias of JZ) tests the zero flag and jumps if it is set.  This makes:
+JE (alias of JZ) tests the zero flag and jumps if it is set.  This creates the
+following equivalencies:
+
 test eax, eax
-je 0x1234
-equivalent to the C statement:
-if (eax == 0)
+je <somewhere>          ---->           if (eax == 0) {}
+
+cmp eax, ebx
+je <somewhere>          ---->           if (eax == ebx) {}

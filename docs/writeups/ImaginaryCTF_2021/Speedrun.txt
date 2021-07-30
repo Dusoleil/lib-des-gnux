@@ -62,7 +62,7 @@ This prooved very difficult given our limited access to machine code in the
 main binary.  There was one useful gadget found in the binary near the end of
 code under the __libc_csu_init symbol, at address 0x40120b; that being:
 
-    5f      pop $rdi
+    5f      pop %rdi
     c3      ret
 
 The randomness to the main() function's buffer didn't affect the offset of these
@@ -120,7 +120,7 @@ does this by decoding and disassembling the data it receives on start-up.
 This just _happens_ to work in this case because the first lea instruction
 encountered in the binary is the one used to grab the buffer address for gets().
 
-From there I use a regex to grap the '120' offset value.  This is the offset
+From there I use a regex to grab the '120' offset value.  This is the offset
 (in hex) from the start of the buffer to the base of the stack frame and is used
 later for payload generation.
 

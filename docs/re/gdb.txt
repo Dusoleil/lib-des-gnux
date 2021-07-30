@@ -1,0 +1,101 @@
+GNU Debugger (gdb) Basic Cheat Sheet
+====================================
+
+If possible, compile program with '-ggdb' to enable GDB-specific debugging
+symbols.
+
+
+Getting started
+---------------
+Launch GDB:
+    > gdb <executable> # note: any arguments to the exe are supplied separately
+    > gdb -p <process id> # attach to an already running process (requires root)
+
+    (gdb) run <argument0> <argument1> ... # Start running program
+
+Quit GDB:
+    (gdb) quit
+    (gdb) q
+
+
+Breakpoints
+-----------
+Set a breakpoint:
+    (gdb) break <function>
+    (gdb) break <function><+offset>
+    (gdb) break <address>
+    (gdb) b <arg>
+
+List breakpoints:
+    (gdb) info break
+    (gdb) i b
+
+Remove breakpoint:
+    (gdb) delete <id>
+    (gdb) d <id>
+    (gdb) d # deletes all breakpoints
+
+
+Debugging
+---------
+Inspect registers:
+    (gdb) info registers
+    (gdb) i r
+
+Get call stack / backtrace:
+    (gdb) backtrace
+    (gdb) bt
+
+Single-step program:
+    (gdb) display/i $pc # If debugging symbols missing, set prompt to display
+                          current instruction disassembly
+    (gdb) n # next source code statement
+    (gdb) s # step source code statement (will follow calls)
+    (gdb) ni # next machine instruction
+    (gdb) si # step machine instruction (will follow calls)
+
+    (gdb) continue # resume execution (until next breakpoint)
+    (gdb) c
+
+    (gdb) finish # resume execution (until ret - step out of function)
+    (gdb) fin
+
+Disassemble program:
+    (gdb) disassemble <function>
+    (gdb) disassemble <address>
+    (gdb) disas <arg>
+
+
+Memory
+------
+Examine memory:
+    (gdb) x/nfu <address> # List contents of memory starting at <address>
+                            and interpret data according to n, f, u
+
+        'n' is a repeat count: Specifies how many values to display
+        'f' is the display format: one of
+            x, d, u, o, t, a, c, f, s, i, m
+        'u' is the unit size: one of
+            b, h, w, g
+
+    Example:
+        (gdb) x/32xg $sp # Display the first 32 64-bit 'giant' words on the
+                           stack
+
+Alter memory:
+    (gdb) set {type}<address> = <value>
+
+    Example:
+        (gdb) set {int}0x7fffffdead = 69 # Write the value 69 to given address
+                                           as a 32-bit integer
+
+
+Process forks
+-------------
+    (gdb) set follow-fork-mode <parent|child> # Define debugging behavior on
+                                                fork()
+    (gdb) set detach-on-fork <on|off> # If set to 'off' gdb will keep a debugger
+                                        on both processes - Default is on
+
+    (gdb) show follow-fork-mode # Check config
+    (gdb) show detach-on-fork # Check config

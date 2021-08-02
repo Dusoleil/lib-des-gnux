@@ -1,0 +1,248 @@
+The Service
+-----------
+Running the program, it prompts us to enter some input.  Whatever we enter is echoed back and then the program waits for more input.  After this second bit of input, the program just ends.
+
+
+
+Reversing
+---------
+Looking at the dissassembly, we see that read() is used to get input both times.  In between the reads, printf() is called.  The first read() writes into a buffer on the stack.  printf() uses this same buffer to read from.
+
+
+
+Attempting a Format String Attack
+---------------------------------
+So this immediately points us towards a format string attack.  I sent a "%s" to test this.  Surprisingly, it actually printed out "%s" literally.
+
+
+
+Back to Reversing
+-----------------
+Looking back at the dissassembly and we can see printf()'s GOT referenced earlier in main().  There is also a reference to puts()'s GOT.  After puts() is called, it will replace the temporary pointer to puts()'s PLT that is in puts()'s GOT with the actual pointer to the puts() function in libc.  main() is then going through a loop where it's writing bytes from puts()'s GOT to printf()'s GOT.  So... when we call printf(), we're actually calling puts().  Okay.
+
+
+
+Attempting a Buffer Overflow into Shellcode
+-------------------------------------------
+This leads me to start looking at buffer overflows.  Sure enough, the buffer is at $rbp-0x110, but read() is reading in 0x200 bytes.  If we look closer, though, we have a stack canary to deal with, so we can't do much.  Then I realized, we print out the contents of the first read() and then read() again.  We could use the first read() to leak the value of the canary and then incorporate it in the next buffer overflow.  Looking at the stack in gdb over a few runs of the program and I noticed that the least significant byte of the canary is always '\x00'.  So we need to write up to that point and then write a single, non-zero byte there to get it to print out.
+
+After leaking the canary and then overflowing the buffer with the canary after, we can overwrite the return address.  My first instinct was to try to return back into the buffer and execute shellcode.  I tried this, but was getting segfaults.  Following the execution in gdb and it was getting into the shellcode, but immediately segfaulting when trying to execute from the stack.  I remembered that there is a flag that can disable executing from the stack.  We can check this with checksec.
+
+    $ checksec --file=linonophobia
+
+And sure enough, NX (no stack execution) is enabled.  After thinking about it a bit, we wouldn't have been able to get into the stack anyways if ASLR is enabledon the target system.  That said, checksec does show us that PIE is disabled, so we can use absolute addresses for things in the executable itself.  I assumed this means we need to do some kind of return oriented programming (ROP), but I've never done this before, so I started googling.
+
+
+
+Return Oriented Programming
+---------------------------
+After looking around on google, it looks like the next thing we should try is a ret2libc attack.  The basic idea is that we can use the global offset table (GOT), which is at a fixed address in our binary, to leak the address to functions in libc, which are randomized each execution due to ASLR.  Then, if we know where a libc function is in memory, and we know what version of libc we have, we can calculate the base address of the libc ELF in memory, which we can then use to calculate the address of any libc function in memory.  The only other caveat is that we need to leak two addresses from libc in order to figure out what version of libc is on the target.
+
+
+
+Tooling
+-------
+So to actually pull this attack off, I need to change my input based on the program's output (since the canary and libc addresses will be different).  Up until this point, the most I have automated pwn exploits was just piping some fixed output into the vulnerable program.  For this, I need to also capture the output of the program.  There are tools and frameworks for building pwn scripts like this including pwntools, but I wanted to work through things myself for now.
+
+I started with a basic script in python using subprocess.Popen, but as things went I ended up making a whole script template/tool thing that I'm calling sploit.  A large part of the effort on this problem was developing this tool, but I don't want to cover all of that here, so I'm going to just focus on the attack itself.
+
+
+
+Leaking the Canary
+----------
+So we start off by overflowing the buffer all the way up to $rbp-0x8 which is where our canary is.  We put one more '\n' byte in to overflow the '\x00' byte at the beginning of the canary.  This will get puts() to print out <our_buffer_fill>'\n'<last_3_bytes_of_canary>.  We could have put anything in there over the '\x00', but since sploit I/O is currently line oriented, a newline makes extracting the canary easy.
+
+
+```
+def preamble():
+    #preamble
+    c.recv()
+    #smash the stack up to canary
+    #+ a newline to overwrite the null and delimit the next two readlines
+    c.send(  payloads['fill']
+            +b'\n')
+    #most of the echo
+    c.recv()
+    #get the canary from the echo
+    out = c.recv()
+    canary = b'\x00'+out[:7]
+    return canary
+```
+
+
+
+Leaking libc
+------------
+On our second read/buffer overflow, we want to leak the addresses of two libc functions.  We know we can print things with puts(), and we have a fixed address to puts()'s procedure linkage table (PLT) entry which we can return into to call puts().  The problem is that we are on a 64 bit system and function arguments are passed via registers.  In particular, the first six arguments are passed via registers and later arguments are passed via the stack.  The first four of these registers, in order, are rdi, rsi, rdx, and rcx. For puts, we just need to get a pointer to what we want to print in rdi.
+
+
+
+ROP Gadgets
+-----------
+This is where the idea of "ROP gadgets" comes in.  A "gadget" is a small section of instructions that we can jump into directly to get some desirable effect.  If we can find the right gadgets and jump around between them, we can effectively do arbitrary instructions.  For now, I'm only focused on simple gadgets like modifying registers and then returning.  There are many ways to find a gadget.  Originally, I actually looked up the sequence of OP codes for the instructions I wanted to do and then searched for them in a hexeditor and in objdump's dissassembly.  As it turns out, there are easier ways to search for gadgets using tools.  For now, I'm using radare2 (reverse engineering focused debugger and binary analysis tool).  We can bring the binary into radare2 and search for specific gadgets and it will return a list of gadgets we can use with their addresses.
+
+    $ r2 linonophobia
+    [0x004005d0]> "/R/ pop rdi;ret"
+
+this will give us a pop rdi gadget which will take something off of the stack and put it in rdi then return to the next address on the stack.  With this, we can return into this gadget, pop the address of something we want to print (like a GOT entry which contains the address of a libc function), and return into the PLT for puts() which will call puts() with whatever we just put into rdi.  Our stack (after the main overflow and canary) will look like:
+
+    <junk saved rbp>
+    <address of pop rdi gadget>
+    <value to pop into rdi>
+    <address of puts() PLT>
+
+We can actually just keep appending more things to "return into".  This is the main idea behind return oriented programming.  So to continue our attack, we can put the address of main() next to restart the process and start another ROP using what we just leaked from the last one.  Even better, we can return into _start() to ensure our stack is "fixed" rather than having our broken junk rbp we gave earlier.  And when we're done with the whole attack, we can call exit(0) to get a clean exit rather than letting the program crash.
+
+
+
+Actually Leaking libc
+---------------------
+So now we know how to call a PLT function with an argument in rdi.  In particular, we want to puts() something to leak libc addresses.  After a libc function is called from PLT for the first time, it's GOT entry is overwritten with the address to the function in memory.  So if we want to get the address of a libc function in memory, we want to print out the contents of it's GOT entry after it's been called.  For linonophobia, we have a few candidates including setvbuf(), read(), puts(), and printf().  Our GOT entry for printf() is already corrupted, and I had issues getting the libc database lookups to work with read, so my final exploit uses setvbuf() and puts().
+
+```
+#rop to find the address of setvbuf in memory
+#for the purpose of looking up the glibc offsets in a database
+canary = preamble()
+ropchain = payloads['poprdi'] #pop rdi,ret
+ropchain += payloads['gotaddr2'] #rdi; pointer to setvbuf.got
+ropchain += payloads['pltaddr'] #ret puts
+#rop to find the address of puts in memory
+#for the purpose of looking up the glibc offsets in a database
+#and then we will use this to calculate our glibc base at runtime
+ropchain += payloads['poprdi'] #pop rdi,ret
+ropchain += payloads['gotaddr'] #rdi; pointer to puts.got
+ropchain += payloads['pltaddr'] #ret puts
+ropchain += payloads['startaddr'] #ret _start to fix stack
+#smash stack again, but with canary and rop
+#this will print out the address of puts in memory
+c.send(  payloads['fill']
+	+canary
+	+payloads['buffaddr']
+	+ropchain)
+```
+
+
+
+Finding our target's libc
+-------------------------
+From here we can use these two addresses to look up in a database the version of libc on the target.  Apparently the libc ELF will always be at a location ending in 0x000 regardless of ASLR.  This means we can take the least significant 12 bits of any libc address and know that it will be the same across executions.  We can use two of these 12 bit offsets to find a libc version that has the same offsets.  There are several databases that provide this service.  libc.blukat.me and libc.rip are two examples.
+
+Searching for my offsets in a database, I'm given a specific libc that is probably what is on the target.  With this, we can look up other offsets to other functions in the library.  For our attack, getting the address to system() and given it the string "/bin/sh" would be ideal.  As it turns out, the string "/bin/sh" actually shows up in libc, too, so we can use this technique to get both.
+
+Then, at runtime, we leak current address of one libc function (e.g. puts()) using the same method as before, use what we know the offset of this function is to calculate where the base address of libc is currently, and then use our offsets to other functions to find them in memory.
+
+```
+#from database
+libc_offset = util.itob(0x0875a0)
+libc_system = util.itob(0x055410)
+libc_exit = util.itob(0x0e6290)
+libc_binsh = util.itob(0x1b75aa)
+#get the glibc puts address
+c.recv()
+out = c.recv()
+libc_addr = out[:8]
+#if puts() terminated on a \x00 (like the most sig bits of an address)
+#our [:8] might get less than 8 bytes of address + a newline
+#so strip that newline
+if libc_addr[-1:] == b'\n':
+libc_addr = libc_addr[:-1]
+#calculate glibc base address
+libc = util.Libc(libc_addr,libc_offset)
+libc_base = libc.base()
+#use that to calculate other glibc addresses
+system_addr = libc.addr(libc_system)
+exit_addr = libc.addr(libc_exit)
+binsh_addr = libc.addr(libc_binsh)
+```
+
+One caveat is that I noticed these aren't always entirely accurate for whatever reason.  For instance, the address that the database gave me for my own local libc's "/bin/sh" string was off by 4 bytes.  We always ROP to puts() to print out the contents at our calculated addresses and check them against what is expected if there are any issues.
+
+For intance, the base address should contain '\x7fELF' and the binsh string should obviously contain '/bin/sh'
+
+
+
+Get a Shell
+-----------
+Now we can call system("/bin/sh") in the same way as how we called puts() earlier.
+
+```
+#rop to system("/bin/sh")
+canary = preamble()
+ropchain = payloads['poprdi'] #pop rdi,ret
+ropchain += binsh_addr #rdi; pointer to "/bin/sh"
+ropchain += system_addr #ret system
+ropchain += payloads['poprdi'] #pop rdi,ret
+ropchain += payloads['null'] #rdi 0
+ropchain += exit_addr #ret exit to exit cleanly
+c.send(  payloads['fill']
+        +canary
+        +payloads['buffaddr']
+        +ropchain)
+```
+
+This worked to get /bin/sh launched on my local machine, but was consistently failing on the remote.  I also had an issue with my scripted shell commands sometimes being dropped.  I thought they were the same issue during the competition and ended up getting around them in the moment by calling execve("/bin/sh",0,0) instead.  I have since figured out what the two issues I was running into were and I'll cover them later in the document.
+
+
+
+Using execve instead
+--------------------
+For the execve() call, though, I need to give more function arguments than before.  Strictly speaking, execve() is supposed to take a list for both the second and third arguments.  These lists can be empty (the first element is just NUll), but the pointer to the list is supposed to be valid.  Luckily, it's normal on Linux for glibc to allow execve() to take NULL as the pointer to these lists and it will behave the same as if an empty list was passed.  To pass these zeroes, we need to fill rsi and rdx.  We can search for another gadget to do this.  I actually couldn't find one in the main executable binary, but I was able to find one in libc itself and used that.
+
+```
+#rop to execve("/bin/sh",0,0)
+canary = preamble()
+ropchain = payloads['poprdi'] #pop rdi,ret
+ropchain += binsh_addr #rdi; pointer to "/bin/sh"
+ropchain += payloads['poprsi_popr15'] #pop rsi,pop r15,ret
+ropchain += payloads['null'] #rsi
+ropchain += payloads['null'] #r15
+ropchain += poprdx_poprbx_addr #pop rdx,pop rbx,ret
+ropchain += payloads['null'] #rdx
+ropchain += payloads['null'] #rbx
+ropchain += execve_addr #ret execve
+ropchain += payloads['poprdi'] #pop rdi,ret
+ropchain += payloads['null'] #rdi 0
+ropchain += exit_addr #ret exit to exit cleanly
+c.send(  payloads['fill']
+        +canary
+        +payloads['buffaddr']
+        +ropchain)
+```
+
+
+
+Shell Commands
+--------------
+Because sploit doesn't support an interactive I/O mode (yet), I just need to send out some specific shell commands to /bin/sh that will get us the flag.
+
+```
+#try some shell commands
+c.send(b'whoami\n')
+c.send(b'pwd\n')
+c.send(b'ls\n')
+c.send(b'cat flag\n')
+c.send(b'cat flag.txt\n')
+c.send(b'exit\n')
+```
+
+
+
+Commands Being Dropped
+----------------------
+When using system(), I was having problems with some of these commands being dropped.  I did not notice this happening with execve(), though I could not explain why.  As it turns out, it was also happening with execve(), I just didn't notice.  I also thought that this was the cause of the exploit failing on remote, but it turns out that was a different problem and switching to execve() just happened to fix that.  This "commands being dropped" issue was also happening on the remote for both system() and execve(), but it was only dropping a couple of the first commands, so I wasn't noticing at first.
+
+
+
+read() issues
+-------------
+In trying to understand the issue with commands being dropped, I backtested sploit against some of the easier pwn problems and it worked just fine.  After a long conversation with the team, we eventually figured out that it was because this problem uses read().  I had an expectation that flush()ing would somehow delimit the data on the buffer so that read() would stop reading at the flush.  This is not true.  read() will read as many bytes as it's told to (or as many are in the buffer, whichever is smaller).  So there is a race condition with our local flush()s and when read() actually returns.  If we flush() all of the shell commands before the read() that gets the ROP chain has returned, it can end up reading in all of the shell commands as well and put them on the stack of the vulnerable program rather than them getting consumed by /bin/sh.  The reason it works "better" on the network is likely due to a mix of latency and the network hardware,interface,protocols,etc. buffering and grouping some of our data together.
+
+If there was some output after the read(), we could use that to synchronize when read() was done and then send our shell commands after.  While our application doesn't have anything printed there that we can use, we can actually just put another puts() in there to synchronize on.  While a bit more kludgy, we can also just sleep for a second between the ROP chain and sending the shell commands.
+
+
+
+Stack Alignment
+---------------
+So this whole "command dropping" thing had nothing to do with why system was failing on the remote.  Someone from the discord pointed me in the direction of stack alignment.  On a 64 bit system, the stack should be aligned to 16 bytes most of the time.  While it really only has to be aligned to 8 bytes most of the time, certain functions do require 16 byte alignment.  And system() is one of those.  For whatever reason, though, it works on my local system.  I even dove deeper into things in gdb on my system and noticed that the stack was consistently ending with 0x8 at the end of main and my ROP chain should be getting me to 0x0 by the time it gets into system().  The "fix" that I do on remote to offset the stack by 0x8 doesn't break my local, either, which implies that my local system() only requires 8 byte alignment.
+
+To fix the alignment, we just need to pop one more thing off of the stack.  We can do this with a useless ret.  Finding a ret gadget is trivial, obviously, and we can just put it right before our system() address.  This gives us a working exploit against the remote and drops us into a shell from which we can read the flag file.

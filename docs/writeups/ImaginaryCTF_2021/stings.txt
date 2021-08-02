@@ -1,0 +1,35 @@
+The Service
+-----------
+we're given an executable
+
+when run, a picture of a bee is printed out and it asks us for a password
+
+if we're wrong, it exits
+
+if we're right, it also exits, but what we entered is the flag
+
+
+
+Reversing
+---------
+looking at the disassembly...
+
+there is a massive string which, after examining, seems to be the bee picture
+
+there are real stack canaries and the addresses change after first run in gdb, so pwn protections
+
+the bee picture is brought onto the stack
+
+a bunch of processing with it is done
+
+at some point it asks for input
+
+there is a loop that compares each character of the input to each character of the resulting buffer after the processing earlier
+
+it expects each character of the input to be -1 from the character in the buffer (you enter "ictf", but the buffer contains "jdug")
+
+
+
+Getting the flag from runtime memory
+------------------------------------
+we can just run the program in gdb, break before inputting, check the status of the buffer, do the character shift in python, and then we have the input it wants (and the flag)

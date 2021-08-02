@@ -1,0 +1,4 @@
+they give you a psd file (I believe it's a photoshop file, but I don't have photoshop and gimp said it was malformed)
+flag was in plaintext in the file. binary file, but strings or even just opening it in a text editor and searching is enough
+
+strings challenge.psd | grep "ictf"

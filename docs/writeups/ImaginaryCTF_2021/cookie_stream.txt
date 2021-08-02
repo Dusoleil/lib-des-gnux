@@ -1,0 +1,70 @@
+honestly, this was more of a crypto problem than web
+
+
+
+The Website
+-----------
+website is mostly two pages / which is a login and /home which will check if you're logged in, redirect you to / if you aren't, rickroll you if you are, or show you the flag if you're logged in as admin
+
+
+
+The Source
+----------
+python file with another flask app
+
+there are actually 3 routes
+
+again, / is a login. the actual page is just a form that POSTs to /backend
+
+/backend redirects to /home on GET. on POST, it "checks" a username and password pair against a hardcoded dictionary of usernames and sha512 hashed passwords. if it gets a match, it will generate a random nonce and then encrypt the username using AES-CTR with a hidden key and the generated nonce. the username is first padded (pkcs7) and converted to bytes. then the nonce is prepended to the encrypted username, the whole thing is hexlified, and it's set as a cookie. finally it redirects to /home
+
+/home separates the nonce and encrypted username out of the cookie, unhexlifies, then decrypts the username using the nonce and secret key. if that username is admin, it prints the flag, otherwise it rickrolls
+
+
+
+The Attack
+----------
+so our goal is to get some ciphertext with the username "admin" encrypted using the app's secret key, create a cookie with that, and visit /home
+
+obviously we don't have access to the key, but the app does call attention to the fact that it uses AES-CTR. looking at a brief description of the CTR mode, it looks like the nonce is actually what is run through the cipher blocks to create a "key stream" which is then byte-wise xor'd against the plaintext to give you the ciphertext.  This means that if we have a chosen plaintext/ciphertext pair, we can xor them to give a valid keystream for a specific nonce.  We could then xor any plaintext into that keystream and effectively have a ciphertext which is that new plaintext encrypted with the hidden key and chosen nonce
+
+so in order to do this, we need a valid plaintext/ciphertext pair and the nonce used to encrypt that ciphertext.  the /backend prepends the nonce to the ciphertext when it encrypts, so if we can encrypt a chosen plaintext through it, we'll also have our corresponding nonce and ciphertext in the resulting cookie.
+
+in order to get /backend to encrypt something for us, we need a valid username and password pair.  the app has that hardcoded dictionary of password hashes, so we can start taking those and throwing them through the standard dictionary attack websites which will compare the hashes against databases and search for a plaintext match.  I got varying results for different hashes with different websites(not that they gave different answers, but some had answers for different hashes), but all we needed was one, so I chose the Eth007:supersecure pair.
+
+Logging in on / with Eth007:supersecure gives a cookie.  We can take that cookie into python and start processing it.
+
+```
+auth = <cookie>
+user = "Eth007"
+nonce = binascii.unhexlify(auth[:16])
+cipher = binascii.unhexlify(auth[16:])
+```
+
+it's worth noting that because of the way this mode works, the plaintext and cipher text are always the exact same length (remember that 'user' was padded to 16 bytes before it was encrypted)
+
+```
+len(nonce) = 8
+len(cipher) = 16
+16 - len(user) = 10
+plain = user + chr(10)*10
+k = []
+for i in range(0,16):
+	k.append(plain[i]^cipher[i])
+key = bytes(k)
+```
+
+and now we have a valid keystream that we can encrypt arbitrary plaintext with
+
+```
+chuser = "admin"
+16 - len(chuser) = 11
+chplain = chuser + chr(11)*11
+c = []
+for i in range(0,16):
+	c.append(chplain[i]^key[i])
+chcipher = bytes(c)
+chauth = binascii.hexlify(nonce) + binascii.hexlify(chcipher)
+```
+
+and now we can set our "auth" cookie to the value of chauth, visit /home, and there's the flag

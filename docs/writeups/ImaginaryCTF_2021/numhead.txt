@@ -1,0 +1,33 @@
+this problem ended up being more about reading a bunch of source code and figuring out an api than any particular vulnerability.
+
+we get a zip of a whole web project's source code.  The website itself is actually just an API that returns json rather than html docs.  There's supposed to be a number guessing game, but we don't actually need to care about it to solve the problem.
+
+The first thing we see in the project is a requirements.txt.  In it there is a reference to "fastapi".  After googling it, it turns out it's a web framework similar to Flask, Django, Rails, etc.
+
+I spent some time reading some basic docs/tutorials on fastapi to get a general feel of how to navigate the project.  There is an app.py that sets up the asgi server, a routers directory with two files full of endpoints we can hit, a number of files dealing with database access, some helper files and config files, a "crud" api that does some business logic routing, and a game.py that implements the guessing game.
+
+In src/routers/admin_endpoints.py, we have a '/flag' endpoint.  When it's called, it goes through crud.get_flag(). In src/crud.py, get_flag() calls get_config() and then .flag on the returned object. If we check src/config/config.py, there is, in fact, a flag variable in a MysteriousSettings class.  It's set to a troll flag in our copy, but it contains the real flag on the live server.  There is really no indication that it would contain something different on the live, and I wasn't expecting it to when I was originally going through the problem, but that ended up being it.
+
+Okay, so we know what we have to call to get the flag.  But of course it isn't that easy.  Looking back at the '/flag' route in admin_endpoints.py, there is a "dependency" on auth.verify_imaginary_user.  Also in the get_flag() function in crud.py, we need valid_session.imaginary_points >= 1000 or it will give us an error message.  So we have two requirements we need to meet when we hit our /flag endpoint.  We need to have a verified user and 1000 points.
+
+Let's start by figuring out how to get become a valid user. In src/auth.py, we can find the verify_imaginary_user() function that we saw earlier.  This function sets up a fastapi Security uses an APIKeyHeader with the name "authorization".  Unfortunately, the fastapi Security and APIKey apis are kind of terribly documented, but we can assume from the context that it is looking for an API key in the http header "authorization".  The function takes this value and a database connection and calls crud.validate_imaginary_user() with them.  Back in crud.py, the validate_imaginary_user function forwards on these arguments to _find_imaginary_user() and, if there is a result, returns it.  Otherwise returns False.
+
+_find_imaginary_user() makes a query to the database checking the "imaginary_id" field with the value from that API key header.  There is also a create_imaginary_user() function that can generate an id and put a user record in the database for us.  In that record it adds the generated id, 10 points, 0 guess attempts, a timestamp, and some "known_discoveries_str". This known_discoveries thing is a json dump of the headers of the request that created the user.  After creating the new user record, the generated id is returned to us.
+
+So how do we get the app to call create_imaginary_user() for us?  Using grep, we can quickly find that it is called directly from src/routers/user_endpoints.py in the '/new-token' route.  This route is a basic POST request, but before it will call create_imaginary_user() for us, it checks our "authorization" API key for flag_config.magical_token.  Looking back again at config.py, there is indeed a magical_token value.  So we can put that in our "authorization" header and get through.
+
+    curl -X POST http://numhead.chal.imaginaryctf.org/api/user/new-token -H "authorization: 0nlyL33tHax0rsAll0w3d"
+
+Okay, now we have an id that we can authenticate with.  But remember our other requirement was to get valid_session.imaginary_points >= 1000. Again, we can grep for imaginary_points and find two ways in which are points are increased.  One is by playing the game, and the other is in crud.py in _submit_attempt() which is called from guess_header() which is called from user_endpoints.py on the '/nothing-here' endpoint.
+
+This endpoint has a "Dependency" that we have a valid user, so we need to give it our id in the authorization header. It directly calls guess_header() which puts any "discoveries" from the database (so our headers when we registered) into session storage.  It won't proceed unless we have more headers in our current request than what is in the session storage.  It then figures out which headers are new and passes them to _submit_attempt(). if we have new headers, it adds them to the database and gives us 100 points.
+
+Okay, so the easiest way to get points is to call the '/nothing-here' endpoint ten times adding a new header each time. The last request will look something like this:
+
+    curl -X POST -H "authorization: 93f43de82a1040c5a724d9a9dbf66364" numhead.chal.imaginaryctf.org/api/user/nothing-here -H "a:a" -H "b:b" -H "c:c" -H "d:d" -H "e:e" -H "f:f" -H "g:g" -H "h:h" -H "i:i" -H "j:j"
+
+And finally, we should be able to call /flag with our 1k points and get the flag.
+
+    curl -H "authorization: 93f43de82a1040c5a724d9a9dbf66364" numhead.chal.imaginaryctf.org/api/admin/flag
+
+And that gives us the flag.

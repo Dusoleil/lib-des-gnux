@@ -1,0 +1,59 @@
+The Service
+-----------
+if we connect to the app, we're prompted with a menu where we can bet on a horse or try to log in as admin.  When we bet on a horse, it prompts us for a horse name and how much we want to bet.  We can put whatever name we want and we can also put whatever bet we want.  It doesn't check that the horse exists or that we have the money to bet.  Trying to login prompts for a password and after a couple seconds will tell us it failed.
+
+
+
+The Source
+----------
+Looking of the source code, we can see that there are two menus.  One for normal users and one for the admin.  We need to login to set a boolean to True to get access to the admin menu.  Trying to login prompts for a password which it checks against some hardcoded regex.
+
+    r'ju(5)tn((([E3e])(v\4))+\4\5)+rl0\1\4'
+
+we can put this in at regexr.com to get a breakdown of the different components and figure out something that works. a basic breakdown is that we choose either 'E', '3', or 'e', and then put two or more repetitions of 'eve' (or whichever character we chose) between ju5tn<eve copies>rl0se.  So ju5tneveeverl0se works.
+
+
+
+Back to the Service
+-------------------
+Once we login, we're presented with the admin menu.  On this menu, we can declare a winner, view our balance, buy the flag, and logout.  Declaring a winner just randomly chooses one of the horses that was bet on from the other menu and calculates how much money we win and lose based on the bets that were made.  Trying to buy the flag requires $100, but even if we have $100, trying to buy the flag will tell us that we need to not be the admin.  Logging out presents us with the same password check from before.
+
+
+
+Back to the Source
+------------------
+So we can only get the flag from the admin menu, but we need to not be the admin in order to get the flag.
+
+Looking closer at the source, the admin boolean is actually a multiprocessing.Value.  This is a shared memory value that can be read and written to from different processes.  the program does a loop where it checks this value and chooses which menu to present us with based on this.  When we try to login, it actually launches a separate process to check the password with multiprocessing.Process and waits 2 seconds for it to finish.
+
+This means we have a potential race condition between the password checking process setting the admin value and the 2 second sleep finishing and returning us back to the loop where the admin value will be checked and the menu will be chosen.  If we can get the password check to fail while taking longer than that 2 second sleep, we can get to the admin menu and wait for the password check to fail and set the admin value back to False.
+
+
+
+Regular Expression Denial of Service
+------------------------------------
+Certain regular expressions are vulnerable to denial of service attacks. If a regular expression is defined in a way that it can accept a given input in several different ways, it may be vulnerable.  The issue is that if an input fails, the regex engine needs to walk itself back to a good state and try to match the input in a different way.  It keeps trying different paths until it has exhausted all of them.  The more ways in which an input can match most of the regex while still failing at the end, the longer it takes.  Vulnerable regular expressions contain
+
+    1) grouping with repetition
+    2) inside the repeated group:
+        a) repetition
+        b) alternation with overlapping
+
+    examples:
+    (a+)+
+    (a|aa)+
+    (a|a?)+
+
+So our above regex definitely falls into this. The middle part is effectively
+
+    ((eve)+eve)+
+
+which can process repetitions of 'eve' in several different ways.
+
+If we put enough repetitions of 'eve' in but mess up the last one, it takes a long time to actually fail.  We can even test this in regexr.com.  If you add enough repetitions, it will actually timeout if the engine takes longer than 250ms.
+
+
+
+The Attack
+----------
+Finally, on to the attack.  We start by making a couple bets with a big difference in money.  We then login as admin with a working password.  We can choose a winner and, if we end up losing money, just start over again.  If we make money, though, we now want to go to the login prompt again, but give our "evil" regex.  After two seconds, we'll be dropped back to the admin menu.  Now we wait for the password checking process to fail and set the admin value back to False.  Finally, we can buy the flag.

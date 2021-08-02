@@ -1,0 +1,5 @@
+they tell you right on the page to try inspecting
+out of curiousity, I also checked the source.  there is a comment telling you it won't be that easy and sending you to a rickroll youtube link (https://imaginaryctf.org/r/69696969)
+there is also a script with some obfuscated bullshit that probably prints something
+so I went to the inspect panel and checked the debug console
+and yeah, there it was

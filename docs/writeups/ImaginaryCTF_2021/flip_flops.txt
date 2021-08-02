@@ -1,0 +1,35 @@
+The Service
+-----------
+connecting to the server you are given a choice to either encrypt something (given as hex) or have the server decrypt something (again, given in hex) and check it against a specific value.
+
+
+
+The Source
+----------
+looking at the python file for the server, we can see that it is using AES in CBC mode.
+
+it will choose a random key and iv each time we connect and let us do three operations before kicking us out
+
+it also won't let us just send the secret value to get encrypted. it checks.
+
+I didn't recognize the setup at first, so I spent a significant bit of time trying to figure out how to gain some kind of oracle based on the fact that the iv was reused, but no luck
+
+
+
+CBC Bit Flipping
+----------------
+after checking the internet, we quickly found that this is a classic setup for a bit flipping attack
+
+in CBC mode, the results of each decryption block are xor'd with the previous ciphertext (or iv) to get the result. this means we can change later blocks of decrypted plaintext by flipping bits in the previous blocks of ciphertext (of course this will mean they decrypt to garbage, but we may not care)
+
+
+
+The Attack
+----------
+so we can encrypt a block (16 bytes) worth of garbage followed by the secret value with a single bit in a single character flipped (we need to get "gimmeflag", so I'll encrypt "fimmeflag" which flips the least significant bit in the first character 0x67 -> 0x66)
+
+we can then take our new ciphertext and flip the corresponding bit in the first block and send it back to the server to decrypt and check
+
+this will decrypt to a block of garbage (different garbage than what we originally sent, though) followed by "gimmeflag"
+
+the first block is lost, but it was just garbage anyways.  the validation function is only checking that our secret value is "in" the decrypted plaintext, not that it equals it

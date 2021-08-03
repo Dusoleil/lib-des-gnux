@@ -1,0 +1,23 @@
+The Problem
+-----------
+given a hint about format strings
+
+a python script using the new python3 "function-like" format strings
+
+in particular,
+
+    inp = input("> ")
+    inp.format(a=stonkgenerator())
+
+this allows us to use "{}" in the inp string to substitute for arguments passed into format().  In this case, we only have a single, named argument we can substitute for ("{a}").  Any instance of "{a}" will be substituted with whatever a= in format().
+
+Normally, you need some kind of object that is printable.  In this case, they are instantiating a class "stonkgenerator" which has a __str__() conversion.  The fact that an object is used here (and that we control the format string) is the exploitable bit.
+
+
+
+The Attack
+----------
+When you use these types of format strings to get an object, you can actually reference properties of that object in the format string as well.  For instance "{a.__str__()}" would actually work.  Python is notoriously bad about data encapsulation, so we now have access to pretty much the whole program's memory.
+
+There is a variable "flag" at the top of the program which reads the flag in from some file.  We want to print this out.  It is as easy as
+{a.__init__.__globals__[flag]}

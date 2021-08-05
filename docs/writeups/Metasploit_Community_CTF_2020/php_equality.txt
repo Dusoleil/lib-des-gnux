@@ -1,0 +1,11 @@
+PORT 8092
+
+another web server which gives us a login page and the php source code for the login page.  The password we give is hashed with a secret salt and compared to a hash that we provide.  If we can guess the salted hash for a given password, we get the flag.
+
+Obviously we aren't going to just guess a salted hash.  At first, I thought this would require us to brute force the salt's hash with an empty password, but this will be way too slow considering the alphabet size, a default 22 character salt, and cost=12 option used in the php.
+
+Then I noticed that the hash was being compared with "==" instead of "===".  php's "fuzzy equality" check does some interesting things (docs/lang/php/loose_comparison.png).
+
+I tried a couple things, but what I got working was to give an array as the password which will cause the password_hash function to return false.  This compared with a null string passed as the hash will actually equal true.
+
+curl target/login.php --data "password[]=&hash="

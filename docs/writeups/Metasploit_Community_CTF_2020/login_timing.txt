@@ -1,0 +1,26 @@
+PORT 8080
+
+This challenge presents us with a simple login page and says that there is one other user.  If we can figure out the username of this other user, we can input it into a different form to check if we're right.
+
+The page says to use your observational skills.
+When logging in, if we use the username "guest" that we are given, the page takes a bit to load.  If we give anything else, it immediately tells us it failed.
+
+I pulled a public wordlist of common usernames, cleaned the list up of special characters, and wrote a simple bash script to iterate over it and try to login using curl.  I kept the log of this loop and ran a grep over it for any requests that took more than basically instant.
+
+Two results were found: guest and demo.
+
+Inputting demo into the other form gives us a success message and a link to the card.
+
+```
+#!/bin/bash
+while IFS= read -r line; do
+	echo "Trying $line..."
+	curl target:8080/login.php --data "username=$line&password=" 1>/dev/null;
+done < usernames-fixed.txt
+```
+
+```
+#!/bin/bash
+grep '0:0' -B3 werdz.txt
+
+```

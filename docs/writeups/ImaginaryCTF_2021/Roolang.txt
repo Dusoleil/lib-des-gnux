@@ -1,0 +1,584 @@
+ELF files are sooooo last year :rooVoid:.  Instead of making yet another ELF to
+reverse, I made a new type of executable binary for you to reverse :rooYay:!  It
+uses my new language Roolang.  Just execute flag.roo to get the flag
+:rooPuzzlerDevil:!  It's dynamically linked, so make sure you have the provided
+roo library files in the same directory :rooCash:.  It's not very optimized, so
+it might take a moment (sorry about that) :rooNobooli:...
+
+Special shoutout to :rooRobin: and :rooOreos:, who have nothing to do with this
+challenge, but are both very cool people :rooHeart:.  Good luck, and I hope you
+have fun :rooNervous:!
+
+Category:       re (400 points)
+Chall author:   puzzler7
+Writeup author: malfurious
+
+
+
+Setup
+-----
+We are provided with a zip archive containing several files:
+
+    blind.roo       *
+    flag.roo        (See Roolang.png)
+    imag.roo        *
+    nobooli.roo     *
+    oreos.roo       *
+    robin.roo       *
+    roolang.py      (See Appendix A)
+
+flag.roo is the primary 'executable'.  This file is actually a PNG image, made
+up of a matrix of smaller sub-images (emoji from the CTF's Discord server).
+
+The remaining *.roo files (marked with a '*') are the 'library files' referred
+to by the problem description.  They are individual original images for each
+of the emoji.
+
+roolang.py is a regular Python script that serves as an interpreter for Roolang.
+
+
+
+Execution
+---------
+If you run roolang.py on the flag.roo file, it starts to output text:
+
+    $ python roolang.py flag.roo
+    Parsing...
+    Running...
+    The flag is ictf{th ...
+
+Each additional character takes longer and longer than the last to be displayed.
+Their calculation is being slowed by an inefficient algorithm.
+
+
+
+Tweaking the interpreter
+------------------------
+I initially tried making improvments to the Python code to see what kind of
+speedup we could see by optimizing the way it executes the various roolang
+instructions.
+
+For example: I tried reducing the amount of stack manipulation per instruction,
+removing checks to useless internal variables, and rewriting operations to take
+effect in-place where appropriate.  I even replaced their `eval(string+'()')`
+method for executing instructions with a proper jump table (via a dictionary).
+
+This made a _very_ noticable difference in run time (LOL), but is not enough
+to make full execution of flag.roo feasible (as expected).  So, I moved on to
+reverse engineering of the flag file using the interpreter.
+
+
+
+Bytecode
+--------
+I mentioned earlier that the program is a matrix of images.  This actually
+forms a linear sequence of emoji, left-to-right, then top-to-bottom.  We can
+see in the functions robinify() and run() how the input file is processed to
+recover the opcode to execute.
+
+Each emoji is detected, reference to the original emoji ('library') files, and
+is tokenized:
+
+    image                   token
+    -----------------------------
+    robin.roo       =>      r
+    oreos.roo       =>      o
+    blind.roo       =>      b
+    imag.roo        =>      i
+    nobooli.roo     =>      n
+
+Every five tokens are grouped as a word.  Token ordering is similar to
+big-endian, so 'robin' means 'r, o, b, i, n').
+
+
+
+Runtime
+-------
+The roolang process has access to a stack and a single general-purpose
+register ('the register').
+
+The calling convention is to push arguments to the stack before jumping.  The
+return address is expected to be 'below' the arguments.  The call instruction
+achieves this by cheating the stack and inserting the address below the
+already-pushed argument.  The subroutine return value is also pushed to the
+stack.  Similar trickery is done by the ret instruction to pop the return
+address out from underneath the return value.
+
+Execution starts at the beginning of the stream and terminates at the end.  By
+studying the interpreter, we can see that roolang implements the following
+instructions (by Python functions of the same name):
+
+    Opcode  Len(words)  Mnemonic    Description
+    ----------------------------------------------------------------------------
+    robin   variable    push        If the 2nd word is the special value 'rinin',
+                                    the value in the register is pushed to the
+                                    stack.  Otherwise, the 2nd word encodes the
+                                    number of additional words to read.  These
+                                    additional words encode a value to push to
+                                    the stack.  All encoded values are in base-3
+                                    and use the o, b, i tokens to represent
+                                    digits 0, 1, 2 respectively.
+
+    rboin   1           pop         Value is popped from the stack
+    rinin   1           pop reg     Value is popped from the stack into register
+
+    rbiin   1           print chr   Value is popped and is output (as character)
+    rboon   1           print       Value is popped and is output (as integer)
+
+    riobn   1           add         Pop 2 off stack, push sum
+    rooon   1           sub         Pop 2 off stack, push difference
+    riibn   1           mul         Pop 2 off stack, push product
+    riion   1           div         Pop 2 off stack, push quotient
+    ribon   1           mod         Pop 2 off stack, push remainder
+    ronon   1           and         Pop 2 off stack, push bitwise and
+    roion   1           or          Pop 2 off stack, push bitwise or
+    roibn   1           xor         Pop 2 off stack, push bitwise xor
+    riiin   1           dup         Push a copy of the top stack value
+    rioin   1           swap        Swap the top two stack values
+
+    rnbon   2           label       Mark a jump point in the program.  The second
+                                    word identifies the jump point.
+
+    rioon   2           jmp         Jump to a jump point, identified by the value
+                                    of the second word.
+
+    rbion   2           jnz         Jump to a jump point, identified by the value
+                                    of the second word.  Only jump if the top
+                                    stack value is non-zero.
+
+    roiin   2           call        Push return address to the stack and jump to
+                                    the jump point identified by the second word.
+
+    ribbn   1           ret         Pop return address from the stack and jump
+                                    to it.
+
+
+
+Disassembly
+-----------
+With this understanding, we can easily modify the interpreter to act as a
+roolang disassembler, outputting the instruction mnemonics for operations used
+by the flag program (following argument data for multi-word instructions).
+
+See Appendix B for the disassembly I generated.  It is annotated with equivalent
+C code to get a better idea of what the program does.
+
+The program starts out by pushing a bunch of data to the stack for processing.
+What follows is a loop which pops a value, performs math on it, and prints a
+character to the output.  A zero value was pushed to the bottom of the stack
+so the program can detect when it has finished.
+
+Each stack value is XOR'd against the result of a recursive function call
+(identified in the flag program by the label 'robin').  Upon closer inspection,
+robin appears to implement a fibonacci function.  The exact logic of the main
+loop is:
+
+    for (i : 0 => len(data))
+    {
+        print_chr(data[i] ^ robin(i));
+    }
+
+i gets farily large, which leads to a ton of redundant processing by robin().
+This is what slows the program, preventing us from finishing it in a reasonable
+time.
+
+
+
+Dynamic programming solution
+----------------------------
+I rewrote the flag program (in Python this time) to leverage dynamic programming
+via memoization to accelerate robin() calculations.  Each result produced by the
+function is cached, so that it doesn't need to be re-computed the next time that
+value is part of a call tree.  The rest of my program is implemented to match
+the logic of flag.roo verbatim.  See Appendix C for this solution code.
+
+"The flag is ictf{thr33_ch33r5_t0_r00r0bin_th3_b3st_0f_u5_a11_r00h3art_7d2e2642}"
+
+
+
+================================================================================
+= Appendix A: roolang.py                                                       =
+================================================================================
+#!/usr/bin/env python3
+
+import sys
+from PIL import Image
+import numpy as np
+
+class Stack(list):
+    def push(self, x):
+        self.append(x)
+
+    def peek(self):
+        return self[-1]
+
+stack = Stack([])
+program = []
+register = 0
+insn_pointer = 0
+
+DEBUG = 0
+
+def robinify(im):
+    tiles = [im[x:x+128,y:y+128,0:4] for x in range(0,im.shape[0],128) for y in range(0,im.shape[1],128)]
+    R = np.asarray(Image.open("robin.roo"))
+    O = np.asarray(Image.open("oreos.roo"))
+    B = np.asarray(Image.open("blind.roo"))
+    I = np.asarray(Image.open("imag.roo"))
+    N = np.asarray(Image.open("nobooli.roo"))
+    d = list(zip([R,O,B,I,N], "robin"))
+
+    ret = ''
+    for c in tiles:
+        for pair in d:
+            if np.all(pair[0]==c):
+                ret += pair[1]
+                break
+    return ret
+
+def step():
+    global insn_pointer
+    insn = c_insn()
+    if DEBUG:
+        print(insn, program[insn_pointer+1], "@", insn_pointer)
+    eval(insn+"()")
+
+def run(prog):
+    global insn_pointer, program
+    for ch in prog:
+        if ch not in "robin":
+            print("Syntax Error")
+            exit(1)
+
+    if len(prog) % 5 != 0:
+        print("Syntax Error")
+
+    program = [prog[i:i+5] for i in range(0, len(prog), 5)]
+    try:
+        while insn_pointer < len(program):
+            step()
+            insn_pointer += 1
+            if DEBUG:
+                print(stack)
+    except Exception as e:
+        print("Fatal Error.")
+        raise e
+    print()
+    print(stack)
+
+def c_insn():
+    return program[insn_pointer]
+
+def robin():
+    global insn_pointer
+    insn_pointer += 1
+    toPush = c_insn()
+    if toPush == "rinin":
+        stack.push(register)
+    else:
+        words = parseDigit(toPush)
+        toPush = 0
+        for i in range(words):
+            insn_pointer += 1
+            toPush += parseDigit(c_insn())
+            toPush *= 27
+        stack.push(toPush//27)
+
+def parseDigit(s):
+    return int(s.replace('o', '0').replace('b', '1').replace('i', '2')[1:-1], 3)
+
+def rboin():
+    stack.pop()
+
+def riobn():
+    stack.push(stack.pop()+stack.pop())
+
+def rooon():
+    stack.push(stack.pop()-stack.pop())
+
+def riibn():
+    stack.push(stack.pop()*stack.pop())
+
+def riion():
+    stack.push(stack.pop()//stack.pop())
+
+def ribon():
+    stack.push(stack.pop()%stack.pop())
+
+def ronon():
+    stack.push(stack.pop()&stack.pop())
+
+def roion():
+    stack.push(stack.pop()|stack.pop())
+
+def roibn():
+    stack.push(stack.pop()^stack.pop())
+
+def riiin():
+    x = stack.pop()
+    stack.push(x)
+    stack.push(x)
+
+def rioin():
+    x = stack.pop()
+    y = stack.pop()
+    stack.push(x)
+    stack.push(y)
+
+def rinin():
+    global register
+    register = stack.pop()
+
+def rbiin():
+    print(chr(stack.pop()), end='', flush=True)
+
+def rboon():
+    print(stack.pop(), end='', flush=True)
+
+def rnbon():
+    global insn_pointer
+    insn_pointer += 1
+
+def rioon():
+    global insn_pointer
+    insn_pointer += 1
+    for i, word in enumerate(program):
+        if word == "rnbon":
+            if i != len(program)-1 and program[i+1] == c_insn():
+                insn_pointer = i+1
+                return
+    print("Label not found!")
+    raise RuntimeError
+
+def rbion():
+    global insn_pointer
+    if stack.peek():
+        rioon()
+    else:
+        insn_pointer += 1
+
+def ribbn():
+    global insn_pointer
+    retval = stack.pop()
+    insn_pointer = stack.pop()
+    if DEBUG:
+        print("returning to", insn_pointer)
+    stack.push(retval)
+
+def roiin():
+    global insn_pointer
+    arg = stack.pop()
+    stack.push(insn_pointer+1)
+    stack.push(arg)
+    rioon()
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: ./roolang.py [filename.roo]")
+        exit()
+
+    if sys.argv[1].split('.')[-1] != "roo":
+        print("Invalid file format!")
+        exit()
+
+    with Image.open(sys.argv[1]) as f:
+        print("Parsing...")
+        program = robinify(np.asarray(f))
+        print("Running...")
+        run(program)
+        print("Finished execution.")
+
+
+
+================================================================================
+= Appendix B: flag.roo annotated disassembly                                   =
+================================================================================
+Parsing...
+Disassebling...
+
+      rnbon    label rooon:
+      robin                  push 0
+      robin                  push 14472334024676096
+      robin                  push 8944394323791450
+      robin                  push 5527939700884769
+      robin                  push 3416454622906725
+      robin                  push 2111485077978096
+      robin                  push 1304969544928756
+      robin                  push 806515533049347
+      robin                  push 498454011879172
+      robin                  push 308061521170150
+      robin                  push 190392490709200
+      robin                  push 117669030460982
+      robin                  push 72723460248127
+      robin                  push 44945570212756
+      robin                  push 27777890035307
+      robin                  push 17167680177653
+      robin                  push 10610209857675
+      robin                  push 6557470319826
+      robin                  push 4052739537835
+      robin                  push 2504730782038
+      robin                  push 1548008755937
+      robin                  push 956722025992
+      robin                  push 591286729974
+      robin                  push 365435296253
+      robin                  push 225851433664
+      robin                  push 139583862488
+      robin                  push 86267571223
+      robin                  push 53316291075
+      robin                  push 32951280083
+      robin                  push 20365011165
+      robin                  push 12586268949
+      robin                  push 7778742098
+      robin                  push 4807527027
+      robin                  push 2971214979
+      robin                  push 1836311808
+      robin                  push 1134903217
+      robin                  push 701408693
+      robin                  push 433494481
+      robin                  push 267914343
+      robin                  push 165580035
+      robin                  push 102334114
+      robin                  push 63246016
+      robin                  push 39088153
+      robin                  push 24157707
+      robin                  push 14930304
+      robin                  push 9227513
+      robin                  push 5702805
+      robin                  push 3524541
+      robin                  push 2178357
+      robin                  push 1346217
+      robin                  push 832119
+      robin                  push 514176
+      robin                  push 317697
+      robin                  push 196465
+      robin                  push 121346
+      robin                  push 75129
+      robin                  push 46403
+      robin                  push 28590
+      robin                  push 17692
+      robin                  push 10993
+      robin                  push 6687
+      robin                  push 4157
+      robin                  push 2668
+      robin                  push 1606
+      robin                  push 957
+      robin                  push 534
+      robin                  push 282
+      robin                  push 128
+      robin                  push 176
+      robin                  push 42
+      robin                  push 94
+      robin                  push 2
+      robin                  push 114
+      robin                  push 108
+      robin                  push 100
+      robin                  push 99
+      robin                  push 35
+      robin                  push 103
+      robin                  push 105
+      robin                  push 85
+
+      =========================================================================================
+      ; main
+      rnbon    label roobn:
+      robin                  push 0
+      rinin                  pop reg                i = 0
+
+      rnbon    label rooin:
+      rbion                  jnz robon              for (c on stack) {
+      rioon                  goto robbn (exit)
+
+      rnbon    label robon:
+      robin                  push reg
+      roiin                  call robin                 int p = c ^ robin(i);
+      roibn                  xor                        print(p);
+      rbiin                  print char                 i++;
+      robin                  push reg               }
+      robin                  push 1
+      riobn                  add
+      rinin                  pop reg
+      rioon                  goto rooin
+      rioon                  goto robbn
+
+      =========================================================================================
+      ; fib (recursive)
+      rnbon    label robin:
+      rbion                  jnz roion            int robin(int arg) {
+      rboin                  pop                      if (arg == 0) {
+      robin                  push 1                       return 1;
+      ribbn                  ret                      }
+
+      rnbon    label roion:                           else {
+      riiin                  dup                          int x = arg - 1;
+      robin                  push 1                       if (x == 0) {
+      rooon                  sub                              return arg; // return 1;
+      rbion                  jnz roibn                    }
+      rboin                  pop
+      ribbn                  ret
+
+      rnbon    label roibn:                               else {
+      rboin                  pop                              int y = robin(arg - 2);
+      riiin                  dup                              int z = robin(arg - 1);
+      robin                  push 1                           return y + z;
+      rooon                  sub                          }
+      robin                  push 0                   }
+      rooon                  sub                  }
+      riiin                  dup
+      robin                  push 1
+      rooon                  sub
+      robin                  push 0
+      rooon                  sub
+      roiin                  call robin  --
+      rioin                  swap
+      roiin                  call robin  --
+      riobn                  add
+      rioin                  swap
+      rboin                  pop
+      ribbn                  ret
+      =========================================================================================
+
+      rnbon    label robbn:
+      robin                  push 0
+      rboin                  pop
+      robin                  push 0
+      rboin                  pop
+
+
+
+================================================================================
+= Appendix C: flag.py solution                                                 =
+================================================================================
+solutions = {}
+
+i = 0
+
+data = [ 14472334024676096, 8944394323791450, 5527939700884769, 3416454622906725,
+        2111485077978096, 1304969544928756, 806515533049347, 498454011879172,
+        308061521170150, 190392490709200, 117669030460982, 72723460248127,
+        44945570212756, 27777890035307, 17167680177653, 10610209857675,
+        6557470319826, 4052739537835, 2504730782038, 1548008755937, 956722025992,
+        591286729974, 365435296253, 225851433664, 139583862488, 86267571223,
+        53316291075, 32951280083, 20365011165, 12586268949, 7778742098,
+        4807527027, 2971214979, 1836311808, 1134903217, 701408693, 433494481,
+        267914343, 165580035, 102334114, 63246016, 39088153, 24157707, 14930304,
+        9227513, 5702805, 3524541, 2178357, 1346217, 832119, 514176, 317697,
+        196465, 121346, 75129, 46403, 28590, 17692, 10993, 6687, 4157, 2668,
+        1606, 957, 534, 282, 128, 176, 42, 94, 2, 114, 108, 100, 99, 35, 103,
+        105, 85 ]
+
+def robin(arg):
+    if arg in solutions:
+        return solutions[arg]
+
+    if arg < 2:
+        return 1
+
+    ret = robin(arg-2) + robin(arg-1)
+    solutions[arg] = ret
+    return ret
+
+while len(data) > 0:
+    c = data[-1]
+    data.pop()
+    print(chr(c ^ robin(i)), end="")
+    i += 1

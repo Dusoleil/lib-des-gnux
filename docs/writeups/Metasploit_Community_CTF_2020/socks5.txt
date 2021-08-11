@@ -1,0 +1,18 @@
+PORT 1080
+
+nmap detected a socks5 proxy on this port.  I did a bit of reading into socks5 and proxies in general as I didn't have a lot of experience actually using them.
+
+The basic idea of socks5 is that any traffic we send to this port will be sent back out from the perspective of the machine hosting the proxy (our target in this case).  This means we can see things from behind any firewalls or on other networks that the target has access to.
+
+The easiest way to use the proxy was with proxychains.
+In /etc/proxychains.conf
+add the line
+socks5 172.15.18.117 1080
+
+then we can scan the target localhost from the other side of the its firewall
+proxychains nmap -A -p- 127.0.0.1
+
+The scan results are in target_scan_local_through_proxy.txt
+we can see ssh on 22, the socks5 on 1080 that we used to get here, and a web server on 8000
+proxychains wget http://127.0.0.1:8000
+gets us a webpage with the flag

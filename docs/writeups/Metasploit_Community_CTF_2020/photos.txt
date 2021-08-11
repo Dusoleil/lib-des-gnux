@@ -1,0 +1,10 @@
+PORT 6868
+
+A web server with simple file hosting (disabled for new users).
+By exploring the site, you quickly realize that there is a structure to where the photos are retrieved from.  Each users' photos are under a subdirectory with their initials.
+
+If we try to create a new user, it uses our initials to create a subdirectory with notes (and single note about how we can't upload anything).  This, of course, means we can check the notes of other users if we know their initials (which we do because of the public photos on the main page).
+
+Looking through these notes, we learn about another user who is an admin, or security person or something.  We can figure out her initials from these notes.  One interesting piece is that she is the only user with a multiple word middle name.  If we try to create a user with a multiple word middle name, the first letter of each word is used in our unique id.  So we need to use the first letters from every word in her name to look at her files.
+
+The flag is just one of the public photos she has under her id.

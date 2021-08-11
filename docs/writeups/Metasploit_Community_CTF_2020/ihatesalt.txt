@@ -1,0 +1,24 @@
+PORT 8123
+
+another web server.  This time, we're presented with a blog about hating salt.  At the bottom of the main page there is an admin@example.com email listed.  There is a signup  page as well as a "forgot your password" page.  There is also an admin page which prompts you with http basic auth.  On the forgotten password page, we can input the admin@example.com email and get a hint for the password.  It begins with "ihatesalt". The signup page allows us to put in a username and password, but will tell us that they are not taking new users at the moment.  We can see that there is client side validation of the password format running in a js file.
+
+Looking at the password validation code, we can see that a password is made up of lower alpha numeric characters and only [9-14] characters long.  So now we have a pretty good guess at the credentials.  username: admin, password: ihatesalt<5 more lowalphanum characters>.  We can brute force it from here, but that could take a long time.  In fact, there was a hint on the main page basically telling us not to use hydra.
+
+Looking back at the hint page, the actual http response for the hint has a little mroe information than just the beginning of the password.  It gives us the hash of the password!  For someone who hates salts, it's interesting that he gives us essentially a 9 character salt for a 5 character hash.
+
+Again, we can brute force this as we have 0-5 characters to try every combination of lower alpha num characters, prepend with "ihatesalt", and md5sum it.  I originally tried doing this in a bash script, but after 10 hours it was still on 3 character passwords and I decided to use a tool built for this.
+
+hashcat saves the day:
+hashcat -a 3 -m 0 -i --increment-min 9 --increment-max 14 -1 ?l?d hash ihatesalt?1?1?1?1?1
+hashcat hash --show
+
+-a gives the attack mode.  We give 3 for brute force. the default mode would use a wordlist and we could have generated a bruteforce wordlist with crunch, but this will do.
+-m gives the hash type.  0 is for MD5
+-i enables increment mode for brute forcing. the min and max give the min and max length for the password (which we know to be 9 and 14)
+-1 lets us define a custom character set.  When we specify the password format, we can match on a character set, but none of the built in sets are lower alpha num.  We define it here with ?l?d where ?l is any lower alpha and ?d is any digit
+then we give a file containing a list of hashes (we have a file "hash" with our single hash) and the password format ihatesalt?1?1?1?1?1
+
+this cracked it in just a couple minutes
+ihatesaltalot7
+
+we can input this on the admin page and get the flag

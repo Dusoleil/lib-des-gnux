@@ -1,0 +1,19 @@
+For the CTF, we were given two machines that were provisioned specifically for us and sitting on a private VPN.  One machine was the target box which hosted several services to be attacked.  The other machine was a Kali box that we could access from the outside internet and was meant to be used as a jump box into the VPN to attack the target box. Once ssh'd in to the kali box, we needed to discover what services were exposed on the target box that we could attack.  We know that there are 20 flags (from the scoreboard), so we can assume there should be around that many services.  We tried port scanning the box using nmap and netcat. We never actually found all of the services, but through trial, error, and man pages, we learned about a number of nmap flags that found most of the services.
+
+Our first attempt was a simple
+nmap -A 172.15.18.117
+
+This returned about 10 services and gave us a starting point to start solving challenges.  Eventually, though, we needed to find the other services.  A netcat scan (tools/netcat_scanner.sh) was used to find most of the other ports, but with significantly less helpful information that nmap provides.
+
+After playing with nmap flags for a while and reading the man page, we used this
+nmap -A -T5 -p1-65535 172.15.18.117
+-p lets you specify ports to check. by default, nmap only scans the top 1000 most common ports, but several of the challenges were not on these ports. apparently you can also omit the bounds of the range and it will default to min/max, so -p- will accomplish the same thing as -p1-65535. possibly we could have used --top-ports <number> to scan more top ports than just the top 1000 and maybe we would have gotten hits as well
+-T specifies how quickly nmap proceeds to the next port when enumerating.  lower numbers are for stealth/not DOSing the network. They can take a very long time, though.  We decided to try the fastest (5) and see if it caused any problems.  No one yelled at us or banned us from the competitiion, so I'm assuming we were fine.
+-A is a convenience flag that turns on several diagnostic options including OS detection, version detection, script scanning, and traceroute
+
+This gave us 20 ports (21 after completing one of the challenges that opens another port for the flag), but two of these ports were for the same challenge, so ultimately we were missing one more service.  After reading writeups, it turns out that we only scanned TCP ports and the last service was on a UDP port.  To find it, we needed to do a UDP scan.  By default, nmap will do a SYN scan (-sS) or a basic TCP connect scan (-sT) if it can't do a SYN scan.  We can give -sU to do a UDP scan.  Apparently you can give both -sS and -sU together to scan both at the same time.
+
+So our final scan that we should have done would be
+nmap -A -T5 -sS -sU -p- 172.15.18.117
+
+The results of the scans we ran and our notes on the services during the ctf can be found in target_scan.txt

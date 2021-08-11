@@ -1,0 +1,28 @@
+PORT 1337
+
+nc target 1337
+we're presented with a simple program
+|     Welcome to the '9 of Clubs' service.
+|     -------------------------------
+|     Please choose an option:
+|     Send contact info
+|     Greetings
+|     Send feedback
+|     Exit
+
+all three options take user input. Option 2 asks for a name and prints it back out to you which could be vulnerable to a format string attack.  We can test it with "%x".  This prints out "200", so it looks like it is vulnerable.
+
+I used perl to construct my payload because I like the syntax.
+perl -e 'print "2\n"."%x"x20 ."\n"'
+This prints the top 20 items on the stack as unsigned hex.
+
+I originally assumed I would need to execute shellcode, so I was trying to determine where my buffer was and where the bottom of the stack frame was.  It seemed that the buffer was actually very large, but around 8092 it would start being picked up by the next command, so I'm assuming some sort of overflow was happening.  That said, I couldn't seem to get it to crash or change anything important on the stack (e.g. return address).  With a format string vuln, I could probably still overwrite the return address, but I need to figure out where it is, first, and the actual print is only printing a ~1000 characters, making it hard to examine very far down the stack.  Normally, you could use positional indices (e.g. %2$x), but this isn't working, so I'm assuming the libc this program was compiled with doesn't support the syntax.  This actually sucks for writing arbitrary data into arbitrary addresses, too.
+
+For now, let's just look at the data in the first few spots on the stack.
+At first, I was getting confused because I was printing 32 bits per item and the numbers didn't make a lot of sense (pointers didn't look like stack pointers, stuff in my own buffer was missing bytes, etc.). %lx or %p will print a full 64 bits (x64, so each item on the stack is 64 bits and each format parameter will advance 64 bits down the stack) while %x will only print the least significant 32 bits.  Once I realized that, the items on the stack made more sense. In particular, most addresses were 0x00007fffxxxxxxxx. On x64, the full address space isn't used, so the stack starts somewhere around 0x00007fffffffffff.  The null bytes make things harder for writing custom pointers, but I wasn't able (and didn't need to) get arbitrary read/write working anyways, so it didn't matter.
+
+Just looking at the first few items on the stack, there are stack addresses at 3,4,5,7,9,10,11, and 12.
+Using %s, I could print out any string data at those locations.
+3,4 were junk.  5 was the format string itself (my buffer), 7 was the destination string (after formatting), and 9 was the flag.
+
+Ended up being much simpler than I was making it.

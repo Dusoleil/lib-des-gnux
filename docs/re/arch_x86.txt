@@ -1,0 +1,107 @@
+Instruction Set References
+--------------------------
+https://en.wikipedia.org/wiki/X86_instruction_listings
+https://stackoverflow.com/questions/3818856/what-does-the-rep-stos-x86-assembly-instruction-sequence-do
+https://stackoverflow.com/questions/6555094/what-does-cltq-do-in-assembly
+
+
+Register Names / Sizes
+----------------------
+"Traditional" general-purpose registers:
+    rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp
+
+ MSB                                                                   LSB
+ +--------+--------+--------+--------+--------+--------+--------+--------+
+ |                                  rax                                  |
+ +--------+--------+--------+--------+--------+--------+--------+--------+
+                                     |                eax                |
+                                     +--------+--------+--------+--------+
+                                                       |        ax       |
+                                                       +--------+--------+
+                                                       |   ah   |   al   |
+                                                       +--------+--------+
+
+Additional x86_64 general-purpose registers:
+    r8, r9, r10, r11, r12, r13, r14, r15
+
+ MSB                                                                   LSB
+ +--------+--------+--------+--------+--------+--------+--------+--------+
+ |                                  r8                                   |
+ +--------+--------+--------+--------+--------+--------+--------+--------+
+                                     |                r8d                |
+                                     +--------+--------+--------+--------+
+                                                       |       r8w       |
+                                                       +--------+--------+
+                              * Note: High byte of lower        |  r8b / |
+                                16-bit word is inaccessible     |  r8l   |
+                                                                +--------+
+
+
+Calling Conventions
+-------------------
+Passing function arguments is arch-dependent: see below.  The caller return
+address is pushed after any argument values.
+
+Often, the called function will use the base pointer register to mark the stack
+address at the bottom of the new stack frame and adjust the stack pointer
+register to allocate space for the new frame in full.  The old bp value is saved
+on the stack above the return address.  See below for an illustration of the
+stack.
+
+On return, the original base and stack pointer values are restored.  Any pushed
+argument values remain on the stack and are the responsibility of the caller.
+The function return value is stored in the a register.
+
++----------------------------+  <- sp (register)            top of stack
+|                            |                              lower addresses
+|  space for local function  |
+| storage: variables, arrays |
+|                            |
+|                            |
++============================+  <- bp (register)
+|     saved base pointer     |
++----------------------------+
+|  saved instruction pointer |
++============================+
+|    function argument ??    |
++----------------------------+
+|    function argument ??    |
++----------------------------+
+|            ...             |
++----------------------------+
+|                            |
+|                            |
+|                            |
+|     caller stack frame     |
+|                            |
+|                            |
+|                            |
++============================+  <- saved base pointer (on stack)
+|   caller saved base ptr    |
+..............................                              higher addresses
+
+
+    32-bit (x86)
+    ------------
+    All function arguments are pushed to the stack in reverse order, leaving the
+    first arguent on the top of the stack.
+
+    Stack pointer register: esp
+    Base pointer register:  ebp
+    Return value in:        eax
+
+
+    64-bit (x86_64)
+    ---------------
+    The first six arguments are stored in registers.  All remaining arguments
+    are pushed to the stack in reverse order.
+
+    Argument #1:            rdi
+    Argument #2:            rsi
+    Argument #3:            rdx
+    Argument #4:            rcx
+    Argument #5:            r8
+    Argument #6:            r15
+    Stack pointer register: rsp
+    Base pointer register:  rbp
+    Return value in:        rax

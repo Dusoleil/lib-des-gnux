@@ -1,0 +1,15 @@
+# TODO: This whole doc
+
+docker run -p host:container
+        Run container with port forwarding
+
+docker run --rm -d --network host --name <something> <image-id>
+        --rm        Destroy container on exit
+        -d          Run detached (don't hijack terminal)
+        --net...    Use host's network (don't need port forward)
+
+docker exec -it
+        Get a shell in container
+
+
+I'm told docker-compose is just much simpler, try to use if possible.

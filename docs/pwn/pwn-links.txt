@@ -1,3 +1,4 @@
 https://opensource.com/article/21/6/linux-checksec
 https://trustfoundry.net/basic-rop-techniques-and-tricks/
 https://www.exploit-db.com/docs/english/28479-return-oriented-programming-(rop-ftw).pdf
+https://defuse.ca/online-x86-assembler.htm

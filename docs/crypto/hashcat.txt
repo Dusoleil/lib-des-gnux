@@ -3,6 +3,8 @@ hashcat is a hardware accelerated hash cracking tool
 useful one-liners mostly stolen from naive-hashcat:
 https://github.com/Kr4ken-9/naive-hashcat/blob/master/naive-hashcat.sh
 hashcat -I
+hashcat --example-hashes | grep -A2 '\$5\$'
+hashcat --show -m <type> <file>
 # DICTIONARY ATTACK
 hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt
 # DICTIONARY ATTACK WITH RULES

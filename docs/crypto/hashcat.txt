@@ -4,15 +4,15 @@ useful one-liners mostly stolen from naive-hashcat:
 https://github.com/Kr4ken-9/naive-hashcat/blob/master/naive-hashcat.sh
 hashcat -I
 # DICTIONARY ATTACK
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt
 # DICTIONARY ATTACK WITH RULES
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/d3ad0ne.rule
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/rockyou-30000.rule
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/dive.rule
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/d3ad0ne.rule
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/rockyou-30000.rule
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/dive.rule
 # MASK ATTACK (BRUTE-FORCE)
-hashcat -w 3 -m <type> -a 3 <file> masks/rockyou-1-60.hcmask
+hashcat --status -w 3 -m <type> -a 3 <file> masks/rockyou-1-60.hcmask
 # COMBINATION ATTACK
-hashcat -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt
+hashcat --status -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt
 
 general command structure:
 hashcat [options] <file with hashes> [wordlist, mask, or mask file] [-r rule file]

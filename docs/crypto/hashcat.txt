@@ -3,13 +3,13 @@ hashcat is a hardware accelerated hash cracking tool
 useful one-liners mostly stolen from naive-hashcat:
 https://github.com/Kr4ken-9/naive-hashcat/blob/master/naive-hashcat.sh
 hashcat -I
-# LIGHT DICTIONARY ATTACK
+# DICTIONARY ATTACK
 hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt
 # DICTIONARY ATTACK WITH RULES
 hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r hashcat/rules/d3ad0ne.rule
 hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r hashcat/rules/rockyou-30000.rule
 hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r hashcat/rules/dive.rule
-# HEAVY MASK ATTACK (BRUTE-FORCE)
+# MASK ATTACK (BRUTE-FORCE)
 hashcat -w 3 -m <type> -a 3 <file> hashcat/masks/rockyou-1-60.hcmask
 # COMBINATION ATTACK
 hashcat -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt

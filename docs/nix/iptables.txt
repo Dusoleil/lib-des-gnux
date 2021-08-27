@@ -1,0 +1,147 @@
+iptables is a configuration utility for the Linux kernel's firewall
+
+useful one-liners:
+iptables -t filter -L -v
+iptables -t filter -F
+iptables -t filter -F INPUT
+iptables -t filter -P INPUT DROP
+iptables -t filter -A INPUT -s 8.8.8.8 -j DROP
+iptables -t filter -A INPUT -p tcp --dport 80 -j DROP
+iptables -t filter -A FORWARD -p tcp --dport 22 -j REJECT --reject-with tcp-reset
+iptables -t nat -A POSTROUTING -o wlan0 -j MASQUERADE
+iptables -t nat -A POSTROUTING -p tcp --sport 1337 -j MASQUERADE --to-ports 1024-30000
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 8080
+iptables -t nat -D POSTROUTING 1
+
+useful options:
+-t <table>                              -- chooses a table to operate on
+-L                                      -- print the contents of the selected table
+-v                                      -- verbose mode (can give more 'v's for more verbosity)
+-F [<chain>]                            -- flush/clear the contents of the selected table or a chain in that table
+-A <chain>                              -- append a new rule to the selected chain in the selected table
+-I <chain> <index>                      -- insert a rule at specified index in the selected chain in the selected table
+-D <chain> <index>                      -- delete a rule at specified index in the selected chain in the selected table
+-R <chain> <index>                      -- replace a rule at specified index in the selected chain in the selected table
+-P <chain> <target>                     -- change the default policy of the selected chain in the selected table
+-p <protocol>                           -- match on protocol (ICMP,TCP,UDP)
+-i <interface>                          -- match on incoming interface
+-s <address>[/mask]                     -- match on source address
+--sport <port>[:<port>]                 -- match on source port(s) (only works with -p)
+-o <interface>                          -- match on outgoing interface
+-d <address>[/mask]                     -- match on destination address
+--dport <port>[:<port>]                 -- match on destination port(s) (only works with -p)
+--to-source <address>[:<port>[-<port>]][-<address>]       -- for SNAT target. Sets the source address(es)
+--to-destination <address>[:<port>[-<port>]][-<address>]  -- for DNAT target. Sets the destination address(es)
+--to-ports <port>[-<port>]              -- for the MASQUERADE and REDIRECT targets. Sets the port(s) of a packet.
+--reject-with <response>                -- for the REJECT target. Return an error after dropping a packet.
+
+It operates on "rules" which are a set of criteria to match a packet by and a "target" which decides what to do with the packet.
+The rules are organized into predefined "chains" which apply at different parts of the packet's journey through the system's routing.
+The rules in a chain are evaluated and potentially applied in the sequence they were added to the chain.
+The chains are organized into "tables" which are mostly just an organization construct.
+Each chain also has a default policy that applies if the packet makes it all the way through the chain (no rule applied).
+
+There are 5 main tables:
+-raw configures packets to be exempt from connection tracking
+-mangle is used for specialized packet alterations
+-security is used for Mandatory Access Control rules
+-nat is used for Network Address Translation
+-filter is the default table which does the stuff you usually think of when thinking about firewalls
+
+For the most part, you'll only ever care about the filter and nat tables.
+Each table has a predefined list of chains which apply at different times as the packet is routed.
+Technically you can jump into a user-defined chain as a target for a rule as well.
+These cannot have default policies. If every rule in one fails to match, the packet goes back to the calling chain.
+A flowchart from the Arch wiki presents a simplified overview of this:
+
+                               XXXXXXXXXXXXXXXXXX
+                             XXX     Network    XXX
+                               XXXXXXXXXXXXXXXXXX
+                                       +
+                                       |
+                                       v
+ +-------------+              +------------------+
+ |table: filter| <---+        | table: nat       |
+ |chain: INPUT |     |        | chain: PREROUTING|
+ +-----+-------+     |        +--------+---------+
+       |             |                 |
+       v             |                 v
+ [local process]     |           ****************          +--------------+
+       |             +---------+ Routing decision +------> |table: filter |
+       v                         ****************          |chain: FORWARD|
+****************                                           +------+-------+
+Routing decision                                                  |
+****************                                                  |
+       |                                                          |
+       v                        ****************                  |
++-------------+       +------>  Routing decision  <---------------+
+|table: nat   |       |         ****************
+|chain: OUTPUT|       |               +
++-----+-------+       |               |
+      |               |               v
+      v               |      +-------------------+
++--------------+      |      | table: nat        |
+|table: filter | +----+      | chain: POSTROUTING|
+|chain: OUTPUT |             +--------+----------+
++--------------+                      |
+                                      v
+                               XXXXXXXXXXXXXXXXXX
+                             XXX    Network     XXX
+                               XXXXXXXXXXXXXXXXXX
+
+or you can look at a more detailed version:
+https://www.frozentux.net/iptables-tutorial/chunkyhtml/images/tables_traverse.jpg
+The first routing decision has to do with whether the packet's destination is the local machine or elsewhere.
+The other routing decisions have to do with deciding which interface to send the packet to.
+
+filter chains:
+-INPUT
+-FORWARD
+-OUTPUT
+
+nat chains:
+-PREROUTING
+-INPUT
+-OUTPUT
+-POSTROUTING
+
+At a high level,
+PREROUTING is packets coming in from a network,
+POSTROUTING is packets going out to a network,
+FORWARD is packets coming from a network out onto a network,
+INPUT is packets coming in to a local process,
+OUTPUT is packets coming out from a local process
+
+If you're using the PREROUTING, POSTROUTING, or FORWARD chains, you are probably trying to forward packets from a network onto a network.
+If this is the case, you need to enable ip forwarding in the kernel
+$ sudo su
+$ echo "1" > /proc/sys/net/ipv4/ip_forward
+
+
+A rule's predicate has several conditions that must be met by a packet for it to apply.
+For some chains, certain conditions don't make sense and aren't allowed to be set.
+For instance, it doesn't make sense to predicate a nat PREROUTING rule on the output interface when that hasn't been decided yet.
+
+Most rules are predicated on
+-packet protocol (ICMP,TCP,UDP)
+-input interface
+-source host
+-source port
+-output interface
+-destination host
+-destination port
+
+Each rule has a target that will apply if the packet matches the rule's predicate.
+These can be a user defined chain, or a built-in target.
+
+There are quite a few built-in targets, but the vast majority of the time you will be using:
+-ACCEPT (stop traversing the current chain and pass the packet to the next chain)
+-DROP (stop traversing all chains entirely and drop the packet dead)
+-REJECT (same as drop except send back an error specified with --reject-with)
+-RETURN (if in a subchain, go back to the superior chain. if in a main chain, use the chain default policy)
+-MASQUERADE (forward incoming packets back out, but change the source address to our outgoing interface's. can also specify a new source port for the packet with --to-ports only valid in nat POSTROUTING)
+-REDIRECT (forward incoming packets to our own host. can also specify a new destination port for the packet with --to-ports only valid in nat PREROUTING and OUTPUT)
+-SNAT (forward incoming packets back out, but change the source address to the specified address(s) via --to-source)
+-DNAT (forward incoming packets back out, but change the destination address to the specified address(s) via --to-destination)
+
+note: for nat rules, only the first packet of a connection is actually mached through the table. the rest of the connection is automatically handled the same (or inverse for responses)

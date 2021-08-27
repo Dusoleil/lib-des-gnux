@@ -6,11 +6,11 @@ hashcat -I
 # DICTIONARY ATTACK
 hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt
 # DICTIONARY ATTACK WITH RULES
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r hashcat/rules/d3ad0ne.rule
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r hashcat/rules/rockyou-30000.rule
-hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r hashcat/rules/dive.rule
+hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/d3ad0ne.rule
+hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/rockyou-30000.rule
+hashcat -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/dive.rule
 # MASK ATTACK (BRUTE-FORCE)
-hashcat -w 3 -m <type> -a 3 <file> hashcat/masks/rockyou-1-60.hcmask
+hashcat -w 3 -m <type> -a 3 <file> masks/rockyou-1-60.hcmask
 # COMBINATION ATTACK
 hashcat -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt
 

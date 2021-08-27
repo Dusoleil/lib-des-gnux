@@ -12,12 +12,12 @@ hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/d3ad0ne.r
 hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/rockyou-30000.rule
 hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/dive.rule
 # MASK ATTACK (BRUTE-FORCE)
-hashcat --status -w 3 -m <type> -a 3 --increment <file> ?a?a?a?a?a?a?a?a?a?a?a
+hashcat --status -w 3 -m <type> -a 3 -i <file> ?a?a?a?a?a?a?a?a?a?a?a
 hashcat --status -w 3 -m <type> -a 3 <file> masks/rockyou-1-60.hcmask
 # HYBRID ATTACK (DICTIONARY + BRUTE-FORCE)
-hashcat --status -w 3 -m <type> -a 6 --increment <file> dicts/rockyou.txt ?a?a?a?a?a?a?a?a?a?a?a
+hashcat --status -w 3 -m <type> -a 6 -i <file> dicts/rockyou.txt ?a?a?a?a?a?a?a?a?a?a?a
 hashcat --status -w 3 -m <type> -a 6 <file> dicts/rockyou.txt masks/rockyou-1-60.hcmask
-hashcat --status -w 3 -m <type> -a 7 --increment <file> ?a?a?a?a?a?a?a?a?a?a?a dicts/rockyou.txt
+hashcat --status -w 3 -m <type> -a 7 -i <file> ?a?a?a?a?a?a?a?a?a?a?a dicts/rockyou.txt
 hashcat --status -w 3 -m <type> -a 7 <file> masks/rockyou-1-60.hcmask dicts/rockyou.txt
 # COMBINATION ATTACK
 hashcat --status -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt

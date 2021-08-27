@@ -21,6 +21,8 @@ hashcat --status -w 3 -m <type> -a 7 --increment <file> ?a?a?a?a?a?a?a?a?a?a?a d
 hashcat --status -w 3 -m <type> -a 7 <file> masks/rockyou-1-60.hcmask dicts/rockyou.txt
 # COMBINATION ATTACK
 hashcat --status -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt
+# STDOUT/STDIN (for workload issues)
+hashcat --stdout -w 3 -a 6 dicts/rockyou.txt masks/rockyou-1-60.hcmask | hashcat --status -w 3 -m <type> <file>
 
 general command structure:
 hashcat [options] <file with hashes> [wordlist, mask, or mask file] [-r rule file]
@@ -86,6 +88,28 @@ Workload Profiles
 The docs claim that 3 and 4 would cause your system to be unusable, but I wasn't seeing that.
 I also didn't see a very significant improvement from 3 to 4, though.
 The default seems to be around 2, but there was a significant performance increase at 3.
+
+Tweaking Keyspace for Performance
+Straight dictionary attacks will generally be pretty fast, but as you add rules and masks, things grow quickly.
+In fact, just a single long mask on its own is often infeasible.
+Generally, you don't want to run against rockyou and a huge collection of rules (or even just one complex one).
+It's better to either use rockyou with a simple rule or have a limited wordlist and a large collection of rules.
+If you're brute forcing, generally you don't want a huge mask.
+If you're hybrid brute forcing, you also don't want a huge wordlist with tons of different masks.
+Again, you want to pick a limited word list and a collection of simple masks.
+One weird gotcha, though, is that hashcat will produce a "base" list of candidates on the CPU
+that then gets blown up into more candidates with an amplifier on the GPU.
+If, after this amplification, the candidate list is too short, the GPU's parallelization can't be taken advantage of.
+For instance, in a hybrid attack with a small wordlist and large list of masks, but some of the masks are very short.
+Each mask in the list will generate a separate candidate list via amplification on the GPU.
+For the short masks, this candidate list will be very short.  This causes a HUGE bottleneck where the GPU can't parallelize.
+Fortunately, hashcat will print out a warning when this happens to let you know.
+It can be somewhat mitigated by tweaking your lists or by running STDOUT/STDIN mode.
+This will generate the candidates as one big batch and pipe them into the main hashcat instance.
+Since we're effectively combining the different amplified candidate lists into one,
+we have a better chance of have a long enough candidate list for the GPU to be properly utilized.
+The main downside is that the main hashcat instance has no idea how long our keyspace is and can't estimate the run time.
+https://hashcat.net/faq/morework
 
 Getting Hardware to Work
 Hashcat uses opencl most of the time.  It can use CUDA directly as well.

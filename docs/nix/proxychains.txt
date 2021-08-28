@@ -1,0 +1,10 @@
+proxychains is a tool that allows us to issue commands over a proxy
+
+Configure your proxy setup in /etc/proxychains.conf
+e.g.
+#/etc/proxychains.conf
+socks5 172.15.18.117 1080
+
+From there we can actually use the proxy with the proxychains command.
+$ proxychains nmap -A -p- 127.0.0.1
+$ proxychains wget http://127.0.0.1:8000

@@ -7,9 +7,10 @@ IceCTF 2018                         1735        214    /1746    (2446)
 PicoCTF 2018                        18060       242    /10648   (10648)
 
 AngstromCTF 2019                    770         191    /1329    (1570)
-CSA CTF 2019                        1326        43     /363     (???)
+CSA CTF 2019                        1326        43     /363
 
-Metasploit Community CTF 2020       1600        41     /413     (???)
+Metasploit Community CTF 2020       1600        41     /413
 
 ImaginaryCTF 2021                   3155        53     /1018    (1018)
 RaRCTF 2021                         2270        85     /845     (1235)
+BuckeyeCTF 2021                     326         152    /505

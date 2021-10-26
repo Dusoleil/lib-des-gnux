@@ -7,7 +7,6 @@ for creative problem solving (H A C K I N G).
 
 Wishlist
 --------
-* Additional wordlists from Kali
 * Docs on hydra?
 * Docs on sqlmap?
 * Build of stegsolve (Java program)

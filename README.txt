@@ -8,8 +8,6 @@ for creative problem solving (H A C K I N G).
 Wishlist
 --------
 * Additional wordlists from Kali
-* (Corrected) rockyou list from Kali
-  [Matching SHA256 16035fea7742cb0561c513de1d946eda5716d7de294e6c732449740096686173]
 * Docs on hydra?
 * Docs on sqlmap?
 * Build of stegsolve (Java program)

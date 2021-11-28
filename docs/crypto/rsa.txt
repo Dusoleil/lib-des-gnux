@@ -1,0 +1,43 @@
+Brief summary of RSA algorithm / crypto system
+----------------------------------------------
+# https://www.cs.utexas.edu/~mitra/honors/soln.html
+
+Choose 2 large, random prime numbers, p and q.
+
+n = p * q
+phi = (p-1) * (q-1)
+
+Choose e, such that `1 < e < phi` and e and phi are coprime (*) (**) (***)
+Compute d, such that `e * d mod phi == 1` (****)
+
+Public key = (e, n)
+Private key = (d, n)
+
+cyphertext =  plaintext ^ e mod n
+plaintext  = cyphertext ^ d mod n
+
+
+(*) It is important for e and phi to be coprime, to prevent ambiguous
+    decryption.  See https://crypto.stackexchange.com/questions/12255/
+
+(**) A very common value for e is (the prime) 65537
+
+(***) RSA can become more vulnerable to cracking with low values of e.
+      See https://crypto.stackexchange.com/questions/6713/.
+      TODO: Explain the attack here.
+
+(****) Calculate d using modular inverse (see below...)
+
+
+
+Python tips
+-----------
+Implementations for fast modular exponentiation and modular inverse already
+exist in Python, via the pow() function.
+
+pow() supports a third argument, which is the modulus value: pow(b, e, n).
+
+To perform fast mod expo for encryption, use pow(plaintext,  e, n)
+                     ... for decryption, use pow(cyphertext, d, n)
+
+To calculate mod inverse, use pow(e, -1, phi).

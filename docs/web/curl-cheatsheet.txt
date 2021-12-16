@@ -1,0 +1,89 @@
+curl common options cheatsheet
+
+#output control
+-v
+"verbose" mode which will print lots of other information including the actual headers in the request and response
+-o <file>
+output file to write the body of the response to
+
+#emulating a browser
+-b <cookiefile> -c <cookiefile>
+read and write cookies from the cookiefile
+-L
+follow redirects (3XX response codes)
+The RFC states that the request method shouldn't be modified for the new request,
+but for 301-303, most browsers will convert a POST into a GET
+--post301,--post302,--post303
+will maintain the request method on redirect
+
+#request header control
+-X <method>
+use the specified request method
+curl will infer this based on other flags and it is generally not needed
+also, it only changes the text in the request, so if other behavior is needed (e.g. HEAD), this won't be sufficient
+(-F,-d imply POST, -G forces GET, -I forces HEAD, -T forces PUT)
+-I
+performs a HEAD request
+(if used with -d, the data will be added as a query string)
+-G
+forces a GET request and appends any -d data as a query string
+-T <file>
+send the specified file with a PUT request
+-H <"Key: Value">
+set a request header
+--path-as-is
+prevents curl from squashing "/../" and "/./" in the path
+
+#sending data
+both the -d and -F families of flags send POST form data
+the -d family of flags uses Content-Type: application/x-www-form-urlencoded
+the -F family of flags uses Content-Type: multipart/form-data
+-d <data>
+sends the specified data in the body of the request
+multiple instances of the flag will append them with a '&' character separating them
+the special characters '=' and '@' have meaning as interpreted in the format section of this cheatsheet
+carriage returns and newlines are stripped
+--data-urlencode <data>
+same as -d except the content is urlencoded before sending it
+--data-binary <data>
+same as -d except newlines and carriage returns are preserved and there are no conversions
+--data-raw <data>
+same as --data-binary except there is no special interpretation of the @ character
+-F <name=content>
+sends data in key/value pairs similar to how a browser works when submitting a form
+content prefixed with '@' or '<' have meaning as interpreted in the format section of this cheatsheet
+--form-string <name=string>
+same as -F except '@', '<', and ';type=' are have no special meaning
+--raw
+disables all HTTP decoding of content and transfer encoding and passes them on unaltered
+
+#various formats for specifying data
+For the -d family of flags:
+-d <content>
+performs any special handling of the content and then passes it on
+-d <name=content>
+performs any special handling of the content part and then passes it on
+-d <=content>
+strips the leading '=', performs any special handling of the content, and then passes it on
+this is mostly useful if the data contains special characters that should be encoded rather than acted on by curl
+-d <@filename>
+performs any special handling of the contents of the file and then passes it on
+-d <name@filename>
+performs any special handling of the contents of the file, prepends it with "name=", and then passes it on
+
+For the -F family of flags:
+-F <name=content>
+sends the key/value pair "name=content" as a field of the form
+each key/value pair in the form should be specified with their own separate -F flag
+-F <name=<filename>
+same as a normal plain-text field except the content is read from the specified file
+-F <name=@filename>
+uploads the file as the content of a named field of a form
+the contents of the file are automatically handled the way a browser handles uploading files through a form
+-F <name=@filename;meta=data>
+by appending ';' after a filename, you can specify various metadata that controls the file upload
+for a comprehensive list, check the man page
+;type=image/png
+set the Content-Type of the file
+;filename=foo.bar
+give the filename of the uploaded file (otherwise curl automatically gives it as the original filename)

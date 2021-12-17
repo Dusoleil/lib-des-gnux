@@ -1,0 +1,57 @@
+https://github.com/david942j/one_gadget
+$ gem install one_gadget
+
+Find libc for the target through dependencies or leaking libc version remotely
+$ ldd <target>
+https://libc.blukat.me
+https://libc.rip
+
+Give this libc binary to one_gadget
+$ one_gadget <path_to_libc>
+
+This will print out multiple offsets that, if jumped into, will call execve("/bin/sh")
+These options will also have a list of requirements for them to work.
+
+Example:
+$ one_gadget /lib/x86_64-linux-gnu/libc.so.6 
+0xe6c7e execve("/bin/sh", r15, r12)
+constraints:
+  [r15] == NULL || r15 == NULL
+  [r12] == NULL || r12 == NULL
+
+0xe6c81 execve("/bin/sh", r15, rdx)
+constraints:
+  [r15] == NULL || r15 == NULL
+  [rdx] == NULL || rdx == NULL
+
+0xe6c84 execve("/bin/sh", rsi, rdx)
+constraints:
+  [rsi] == NULL || rsi == NULL
+  [rdx] == NULL || rdx == NULL
+
+By setting the requisite registers to the correct values
+and jumping to the corresponding offset, you will get a shell.
+
+For situations where you can overwrite a GOT address, but not leak libc,
+you may want to overwrite just the last couple bytes of an address to
+a libc function that is close to the one-gadget.  This gives a good chance
+of jumping into your one-gadget.
+You can list one-gadgets that are close to a libc function with
+$ one_gadget <path_to_libc> -n <comma separated list of regular expression libc functions>
+
+You can also give the target binary to "-n" and it will consider the entire GOT
+$ one_gadget <path_to_libc> -n <path_to_target>
+
+By default, one_gadget only shows gadgets with high probability,
+but by setting "-l 1", it will show all found gadgets.
+
+By giving a bash script string, one_gadget can call your script with all found gadgets as an argument.
+The following would call 'echo <gadget offset>' for each found one-gadget
+$ one_gadget <path_to_libc> -s 'echo'
+
+This isn't particularly useful with sploit currently since you can't give cli arguments to the script right now.
+
+Some boilerplate for calling and consuming the output of one_gadget from within Python:
+def one_gadget(filename):
+  return [int(i) for i in subprocess.check_output(['one_gadget', '--raw', filename]).decode().split(' ')]
+one_gadget('/lib/x86_64-linux-gnu/libc.so.6')

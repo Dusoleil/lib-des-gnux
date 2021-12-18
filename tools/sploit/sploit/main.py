@@ -1,61 +1,60 @@
-import argparse
+from argparse import ArgumentParser, REMAINDER
+import gc
 import tempfile
 import traceback
-import gc
 
 from sploit.comm import *
+from sploit.log import *
+
+def print_banner(color, line1='', line2='', line3=''):
+    ilog()
+    ilog(' ░▒█▀▀▀█░▒█▀▀█░▒█░░░░▒█▀▀▀█░▀█▀░▀▀█▀▀    ', end='', color=ALT)
+    ilog(line1, color=ALT)
+    ilog(' ░░▀▀▀▄▄░▒█▄▄█░▒█░░░░▒█░░▒█░▒█░░░▒█░░    ', end='', color=color)
+    ilog(line2, color=ALT)
+    ilog(' ░▒█▄▄▄█░▒█░░░░▒█▄▄█░▒█▄▄▄█░▄█▄░░▒█░░    ', end='', color=ALT)
+    ilog(line3, color=ALT)
+    ilog()
 
 def main():
-    parser = argparse.ArgumentParser(description='Execute Sploit Script Against Target')
-    parser.add_argument('-d', '--daemon', action='store_true',
-                        help='run in "daemon" mode with pipes instead of a designated target')
-    parser.add_argument('script',
-                        help='exploit script to run')
-    parser.add_argument('target', nargs=argparse.REMAINDER,
-                        help='target program to exploit')
+    parser = ArgumentParser(description='Execute Sploit script against target')
+    parser.add_argument('script', help='Exploit script to run')
+    parser.add_argument('target', nargs=REMAINDER, help='Target program to exploit')
     args = parser.parse_args()
 
     if(len(args.target)>0):
-        if(args.daemon):
-            print("Target Given. Ignoring Daemon Flag...")
         target(args.script, args.target)
     else:
-        if(args.daemon):
-            daemon(args.script)
-        else:
-            pipe(args.script)
+        pipe(args.script)
 
-def daemon(script):
-    print("Running in Pipe Daemon Mode...")
+def pipe(script):
+    print_banner(ERROR, line3='Pipe Mode')
     with tempfile.TemporaryDirectory() as tmpdir:
         while(True):
             try:
                 p = Pipes(tmpdir)
             except KeyboardInterrupt:
                 break
-            runscript(script, Comm(p));
+            runscript(script, Comm(p))
             del p
 
-def pipe(script):
-    print("Running in Pipe Mode...");
-    runscript(script, Comm(Pipes()));
-
 def target(script, target):
-    print("Running in Target Mode...")
-    runscript(script, Comm(Process(target)));
+    print_banner(STATUS, line3='Subprocess Mode')
+    runscript(script, Comm(Process(target)))
 
 def runscript(script, comm):
     try:
-        print("Running Script...")
+        ilog("Running Script...")
         code = compile(open(script).read(), script, 'exec')
-        exec(code, {'io': comm})
-        print("Script Finished!")
+        exec(code, {'io': comm, 'print': elog})
+        ilog("Script Finished!")
+        comm.shutdown()
         comm.readall()
         return
     except KeyboardInterrupt:
         pass
     except:
-        traceback.print_exc()
+        ilog(traceback.format_exc(), end='', color=ERROR)
     finally:
         gc.collect()
-    print("Script Ended Early!")
+    ilog("Script Ended Early!", color=WARNING)

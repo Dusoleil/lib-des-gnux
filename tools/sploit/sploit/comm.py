@@ -4,35 +4,42 @@ import os
 import sys
 import select
 
-from sploit.log import log
+from sploit.log import *
 from sploit.until import bind
 
 class Comm:
     logonread = True
+    logonwrite = False
     flushonwrite = True
 
     def __init__(self, backend):
         self.back = backend
 
+    def shutdown(self):
+        self.back.stdout.close()
+
     def read(self, size):
         data = os.read(self.back.stdin.fileno(), size)
         if(data == b''):
             raise BrokenPipeError('Tried to read on broken pipe')
-        if self.logonread : log(data)
+        if self.logonread : ilog(data, file=sys.stdout, color=NORMAL)
         return data
 
     def readline(self):
         data = self.back.stdin.readline()
         if(data == b''):
             raise BrokenPipeError('Tried to read on broken pipe')
-        if self.logonread : log(data)
+        if self.logonread : ilog(data, file=sys.stdout, color=NORMAL)
         return data
 
     def readall(self):
         data = b''
-        for line in self.back.stdin:
-            log(line)
-            data += line
+        try:
+            for line in self.back.stdin:
+                if self.logonread : ilog(line, file=sys.stdout, color=NORMAL)
+                data += line
+        except KeyboardInterrupt:
+            pass
         return data
 
     def readuntil(self, pred, /, *args, **kwargs):
@@ -40,12 +47,14 @@ class Comm:
         pred = bind(pred, *args, **kwargs)
         l = self.logonread
         self.logonread = False
-        while(True):
-            data += self.read(1)
-            if(pred(data)):
-                break
-        self.logonread = l
-        if self.logonread : log(data)
+        try:
+            while(True):
+                data += self.read(1)
+                if(pred(data)):
+                    break
+        finally:
+            self.logonread = l
+        if self.logonread : ilog(data, file=sys.stdout, color=NORMAL)
         return data
 
     def readlineuntil(self, pred, /, *args, **kwargs):
@@ -60,12 +69,13 @@ class Comm:
     def write(self, data):
         self.back.stdout.write(data)
         if self.flushonwrite : self.back.stdout.flush()
+        if self.logonwrite : ilog(data, file=sys.stdout, color=ALT)
 
     def writeline(self, data):
         self.write(data + b'\n')
 
     def interact(self):
-        print("<--Interact Mode-->")
+        ilog("<--Interact Mode-->")
         stdin = sys.stdin.buffer
         os.set_blocking(self.back.stdin.fileno(), False)
         os.set_blocking(stdin.fileno(), False)
@@ -79,9 +89,11 @@ class Comm:
                 if(data == b''):
                     break
                 write(data)
+        def writeinput(write):
+            ilog(write, file=sys.stdout, color=NORMAL)
         readtable = {
                 stdin.fileno() : lambda : readall(stdin.readline, self.write),
-                self.back.stdin.fileno() : lambda : readall(self.back.stdin.readline, log)
+                self.back.stdin.fileno() : lambda : readall(self.back.stdin.readline, writeinput)
         }
         readtable[self.back.stdin.fileno()]()
         while(not brk):
@@ -97,17 +109,17 @@ class Comm:
                 break
         os.set_blocking(self.back.stdin.fileno(), True)
         os.set_blocking(stdin.fileno(), True)
-        print("<--Interact Mode Done-->")
+        ilog("<--Interact Mode Done-->")
 
 class Process:
     def __init__(self, args):
-        print(f"Running: {' '.join(args)}")
+        ilog(f"Running: {' '.join(args)}")
         self.proc = subprocess.Popen(args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 preexec_fn=lambda : os.setpgrp())
-        print(f"PID: {self.proc.pid}")
+        ilog(f"PID: {self.proc.pid}")
         self.stdin = self.proc.stdout
         self.stdout = self.proc.stdin
 
@@ -116,8 +128,8 @@ class Process:
         if(self.proc.poll() != None):
             return
         try:
-            print("Waiting on Target Program to End...")
-            print("Press Ctrl+C to Forcefully Kill It...")
+            ilog("Waiting on Target Program to End...")
+            ilog("Press Ctrl+C to Forcefully Kill It...")
             self.proc.wait()
         except KeyboardInterrupt:
             self.proc.kill()
@@ -135,11 +147,11 @@ class Pipes:
         self.pathout = os.path.join(dirname, "out")
         os.mkfifo(self.pathin)
         os.mkfifo(self.pathout)
-        print("Waiting on Target to Connect...")
-        print("<"+self.pathin+" >"+self.pathout)
+        ilog("Waiting on Target to Connect...", file=sys.stdout)
+        ilog(f"<{self.pathin} >{self.pathout}", file=sys.stdout)
         self.stdout = open(self.pathin, "wb")
         self.stdin = open(self.pathout, "rb")
-        print("Connected!")
+        ilog("Connected!")
 
     def __del__(self):
         try:
@@ -149,4 +161,3 @@ class Pipes:
             pass
         if getattr(self,'pathin',None) and os.path.exists(self.pathin) : os.unlink(self.pathin)
         if getattr(self,'pathout',None) and os.path.exists(self.pathout) : os.unlink(self.pathout)
-

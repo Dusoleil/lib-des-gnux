@@ -1,0 +1,18 @@
+The "rep" prefix on a string instruction repeats that string instruction for CX block loads.
+e.g.
+STOS is "Store String"
+It will store the value in AX at the address in RDI
+(technically, STOSB, STOSW, STOD, and STOSQ use AL, AX, EAX, and RAX respectively)
+If RCX = 0x20, RDI = some buffer, and RAX = 0,
+
+`rep stosq`
+
+is equivalent to:
+
+```
+buf_ptr = buf
+for(i = 0x20; i != 0; i++)
+    *buf_ptr = 0;
+    buf_ptr++;
+```
+

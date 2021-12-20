@@ -3,6 +3,14 @@ r2 command cheatsheet
 https://github.com/radareorg/radare2
 https://book.rada.re
 
+#Install
+git clone https://github.com/radareorg/radare2.git
+sudo ./sys/install.sh
+
+#Uninstall
+sudo make uninstall
+sudo make purge
+
 #Run Command From Shell Without Opening r2 Prompt
 r2 -q -c "<r2 command>" <target>
 

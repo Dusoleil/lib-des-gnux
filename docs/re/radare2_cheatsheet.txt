@@ -1,0 +1,80 @@
+r2 command cheatsheet
+
+https://github.com/radareorg/radare2
+https://book.rada.re
+
+#Run Command From Shell Without Opening r2 Prompt
+r2 -q -c "<r2 command>" <target>
+
+#Generic
+? <expr>            expression evaluation/conversions
+!<command>          run shell command from inside r2
+s <addr>            seek to address
+
+#Useful Operators
+<command1>;<command2>               do command2 after command1
+"<command>"                         don't parse r2 operators in the command
+<command> `<inner command>`         run inner command and use its output in outer command
+<command> ~<word>                   grep output of command for lines matching word
+<command> @ <address>               temporarily seek to address and run command
+<command> @@ <flag>*                run command on every flag matching flag*
+<command> @@f                       run command on all functions
+<command> @@f:<func>                run command on all functions matching name
+<command> @@s:<from> <to> <step>    run command on each offset from->to incrementing by step
+
+#Info and Analysis
+i                   print file info (including binary info; e.g. rabin -I or checksec)
+ia                  print binary info, imported symbols, and exported symbols
+il                  print linked libraries
+iS                  print sections (with permissions)
+is                  print symbols
+ic                  print classes
+afl                 print functions
+ie                  print entry points
+iM                  print main's address
+iz                  print strings in data section
+izz                 print strings in whole binary
+aaa                 analyze all
+fs                  list flagspaces
+fs <flagspace>      set current flagspace
+f                   print current flagspace
+axt [<addr>]        show references to this address
+axf [<addr>]        show references from this address
+
+#Searching
+/ <string>              search for string
+/i <string>             case-insensitive search for string
+/e /<string>/<options>  regex search for string
+/R <opcodes>            search for opcodes
+/R/ <opcodes>           regex search for opcodes
+/v <value>              search for value
+/V <min> <max>          search for value in range
+/x <hex>                search for hex string
+
+#Print Address Contents
+pdf         print function disassembled
+pdc         print function in c-like pseudo-code
+pv          print value
+px          print hexdump
+ps          print string
+psz         print zero-terminated string
+
+#Tracking Things
+afn <func> [<addr>]         rename function at address
+afvn <arg> [<old_name>]     rename variable or function argument
+
+#Visual Mode
+V                       enter visual mode
+VV                      enter visual graph mode
+:                       open r2 cli
+p                       next screen
+P                       previous screen
+g <address>             seek to address 
+[tag next to call]      seek to tag (in visual mode)
+o[tag next to call]     seek to tag (in visual graph mode)
+x                       xrefs to
+X                       xrefs from
+m<key>                  mark offset (in visual mode)
+'<key>                  seek to marked offset (in visual mode)
+u                       undo seek
+U                       redo seek

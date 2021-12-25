@@ -11,7 +11,7 @@ is equivalent to:
 
 ```
 buf_ptr = buf
-for(i = 0x20; i != 0; i++)
+for(i = 0x20; i != 0; i--)
     *buf_ptr = 0;
     buf_ptr++;
 ```

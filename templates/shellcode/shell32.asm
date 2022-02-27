@@ -5,6 +5,7 @@ global _start
 
 _start:
     xor     ecx, ecx
+    xor     edx, edx
     push    0xb
     pop     eax
     push    ecx

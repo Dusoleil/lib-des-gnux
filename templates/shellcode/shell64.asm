@@ -5,6 +5,7 @@ global _start
 
 _start:
     xor     rsi, rsi
+    xor     rdx, rdx
     push    rsi
     mov     rdi, 0x68732f2f6e69622f
     push    rdi

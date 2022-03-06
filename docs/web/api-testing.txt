@@ -1,0 +1,7 @@
+REST/SOAP API Client
+(basically curl or burpsuite but hosted online)
+https://reqbin.com/
+
+HTTP Request Capture Server
+(host an endpoint that captures requests and let's you inspect them)
+https://hookbin.com/

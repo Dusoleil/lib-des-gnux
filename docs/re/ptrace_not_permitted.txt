@@ -1,0 +1,22 @@
+If you are seeing errors from your debugger such as
+strace: (PTRACE_ATTACH): operation not permitted
+ptrace: operation not permitted
+ptrace_attach: operation not permitted
+etc.
+
+This is likely because of a linux kernel hardening setting.
+/proc/sys/kernel/yama/ptrace_scope
+This setting prevents a process from running ptrace on a non-child process.
+Even with this on, a can still ptrace another process if it is a child.
+Debuggers like gdb and radare2 use ptrace when you attach via PID.
+
+You can turn this off
+$ sudo su
+$ echo 0 > /proc/sys/kernel/yama/ptrace_scope
+
+Turning this off is global, though.
+Instead, set the capabilities of just your debugger to override this setting.
+
+$ sudo setcap CAP_SYS_PTRACE=+eip /usr/bin/gdb
+$ sudo setcap CAP_SYS_PTRACE=+eip /usr/bin/radare2
+

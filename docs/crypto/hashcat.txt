@@ -1,0 +1,134 @@
+hashcat is a hardware accelerated hash cracking tool
+
+useful one-liners mostly stolen from naive-hashcat:
+https://github.com/Kr4ken-9/naive-hashcat/blob/master/naive-hashcat.sh
+hashcat -I
+hashcat --example-hashes | grep -A2 '\$5\$'
+hashcat --show -m <type> <file>
+# DICTIONARY ATTACK
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt
+# DICTIONARY ATTACK WITH RULES
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/d3ad0ne.rule
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/rockyou-30000.rule
+hashcat --status -w 3 -m <type> -a 0 <file> dicts/rockyou.txt -r rules/dive.rule
+# MASK ATTACK (BRUTE-FORCE)
+hashcat --status -w 3 -m <type> -a 3 -i -1 ?l?d <file> ?1?1?1?1?1?1?1?1?1?1?1
+hashcat --status -w 3 -m <type> -a 3 -i <file> ?a?a?a?a?a?a?a?a?a?a?a
+hashcat --status -w 3 -m <type> -a 3 <file> masks/rockyou-1-60.hcmask
+# HYBRID ATTACK (DICTIONARY + BRUTE-FORCE)
+hashcat --status -w 3 -m <type> -a 6 -i <file> dicts/rockyou.txt ?a?a?a?a?a?a?a?a?a?a?a
+hashcat --status -w 3 -m <type> -a 6 <file> dicts/rockyou.txt masks/rockyou-1-60.hcmask
+hashcat --status -w 3 -m <type> -a 7 -i <file> ?a?a?a?a?a?a?a?a?a?a?a dicts/rockyou.txt
+hashcat --status -w 3 -m <type> -a 7 <file> masks/rockyou-1-60.hcmask dicts/rockyou.txt
+# COMBINATION ATTACK
+hashcat --status -w 3 -m <type> -a 1 <file> dicts/rockyou.txt dicts/rockyou.txt
+# STDOUT/STDIN (for workload issues)
+hashcat --stdout -w 3 -a 6 dicts/rockyou.txt masks/rockyou-1-60.hcmask | hashcat --status -w 3 -m <type> <file>
+
+general command structure:
+hashcat [options] <file with hashes> [wordlist, mask, or mask file] [-r rule file]
+
+useful options:
+-I                      -- list all installed opencl platforms and devices
+--identify              -- try to detect what type of hash is in the file
+--example-hashes        -- print out an example hash for each hash type
+-D <num>                -- specify a device type to use (1=CPU,2=GPU,3=FPGA)
+-d <num>                -- specify a device to use
+-w <num>                -- workload profile (1-4 where 1 is light on resources and 4 should be run headless)
+-m <num>                -- hash type
+-a <num>                -- attack type
+-i                      -- enable increment mode for mask attacks
+--increment-min <num>   -- minimum length for incrementing
+--increment-max <num>   -- maximum length for incrementing
+-1 <charset>            -- custom charset 1
+-2 <charset>            -- custom charset 2
+-3 <charset>            -- custom charset 3
+-4 <charset>            -- custom charset 4
+-r <file>               -- rules file
+-j <rule>               -- in combinator attack, use single rule for left dictionary
+-k <rule>               -- in combinator attack, use single rule for right dictionary
+-o <file>               -- output file
+--status                -- automatic update of status screen
+--show                  -- if a hash has already been cracked and saved, print it
+--stdout                -- don't crack, just print out candidates. useful to generate a wordlist for another program
+-g <num>                -- randomly generate some number of rules
+
+Hash Type
+You specify what is in your file (e.g. an MD5 hash, an /etc/passwd file, a WPA handshake, etc.) with -m
+You can try to use the --identify and --example-hashes flags to figure out what to use.
+There is also a list of all of the modes in the man page and help output.
+short list of some useful ones:
+0       - MD5
+500     - md5crypt ($1$)
+1       - SHA1
+1400    - SHA256
+7400    - sha256crypt ($5$)
+1700    - SHA512
+1800    - sha512crypt ($6$)
+3200    - bcrypt/blowfish ($2*$)
+11600   - 7zip ($7z$)
+2500    - WPA handshake converted into a .hccapx file
+400     - phpass/wordpress/phpbb3/joomla ($P$)
+16500   - JSON Web Token (JWT)
+
+For WPA handshakes, you need to convert the .pcap into a .hccapx
+This can be done with the hashcat-utils package (may be in package manager, otherwise git)
+$ git clone https://github.com/hashcat/hashcat-utils.git
+Or using aircrack-ng (which you probably used to get it in the first place)
+$ aircrack-ng -j <out-file> <pcap-file>
+
+Attack Type
+0 - "straight mode" or dictionary attack. you can also specify rule files - https://hashcat.net/wiki/doku.php?id=rule_based_attack
+1 - "combinator mode" cartesian product of two dictionaries. can also use a single rule on each side with -j/-k
+3 - "mask mode" or brute force mode. uses a fixed length pattern with wildcards - https://hashcat.net/wiki/doku.php?id=mask_attack
+6 - "hybrid" wordlist+mask
+7 - "hybrid" mask+wordlist
+hybrid - basically a combinator attack but one side is a brute force mask instead of another wordlist
+
+Workload Profiles
+The docs claim that 3 and 4 would cause your system to be unusable, but I wasn't seeing that.
+I also didn't see a very significant improvement from 3 to 4, though.
+The default seems to be around 2, but there was a significant performance increase at 3.
+
+Tweaking Keyspace for Performance
+Straight dictionary attacks will generally be pretty fast, but as you add rules and masks, things grow quickly.
+In fact, just a single long mask on its own is often infeasible.
+Generally, you don't want to run against rockyou and a huge collection of rules (or even just one complex one).
+It's better to either use rockyou with a simple rule or have a limited wordlist and a large collection of rules.
+If you're brute forcing, generally you don't want a huge mask.
+If you're hybrid brute forcing, you also don't want a huge wordlist with tons of different masks.
+Again, you want to pick a limited word list and a collection of simple masks.
+One weird gotcha, though, is that hashcat will produce a "base" list of candidates on the CPU
+that then gets blown up into more candidates with an amplifier on the GPU.
+If, after this amplification, the candidate list is too short, the GPU's parallelization can't be taken advantage of.
+For instance, in a hybrid attack with a small wordlist and large list of masks, but some of the masks are very short.
+Each mask in the list will generate a separate candidate list via amplification on the GPU.
+For the short masks, this candidate list will be very short.  This causes a HUGE bottleneck where the GPU can't parallelize.
+Fortunately, hashcat will print out a warning when this happens to let you know.
+It can be somewhat mitigated by tweaking your lists or by running STDOUT/STDIN mode.
+This will generate the candidates as one big batch and pipe them into the main hashcat instance.
+Since we're effectively combining the different amplified candidate lists into one,
+we have a better chance of have a long enough candidate list for the GPU to be properly utilized.
+The main downside is that the main hashcat instance has no idea how long our keyspace is and can't estimate the run time.
+https://hashcat.net/faq/morework
+
+Getting Hardware to Work
+Hashcat uses opencl most of the time.  It can use CUDA directly as well.
+We need to set up all of the drivers and opencl implementations to get it to use our hardware.
+Even if we wanted to run on the CPU, we would need the opencl implementation that uses it.
+Usually the CPU implementation would be through pocl (portable computing language).
+$ apt install pocl-opencl-icd
+There are mesa implementations for opencl, but they're kind of shit.
+$ apt install mesa-opencl-icd
+You can access CUDA through opencl, but it may still need CUDA libraries installed
+A better option would be to have hashcat use CUDA directly since you'll be installing the libraries anyways.
+https://developer.nvidia.com/cuda-downloads
+And make sure hashcat is selecting the direct implementation instead of opencl.
+On AMD, there is the ROCM API which is similar to CUDA.
+With hashcat, we need an opencl implementation to ROCM.
+https://rocmdocs.amd.com/en/latest/Installation_Guide/Installation-Guide.html
+As it turns out, ROCM is only supported on dedicated GPUs.
+There doesn't seem to be a proper solution for APUs.  There is a 3rd party implementation of ROCM for APUs here:
+https://apt.bruhnspace.com/
+But I couldn't get it working.
+

@@ -1,0 +1,67 @@
+Can you get the flag?  Reverse engineer this binary.
+
+Category:       re (300 points)
+Chall author:   LT 'syreal' Jones
+Writeup author: malfurious
+
+
+
+Setup
+-----
+We are given a single ELF binary named 'unpackme-upx'.  The challenge hint
+(matching my initial intuition) vaguely hinted at looking up what UPX is.
+
+UPX is a self-extracting executable solution.  The name means:
+Ultimate Packer for eXecutables.  So, the bulk of the target logic in the
+file should be compressed and not directly accessible to analysis.
+
+When run, the program prints "What's my favorite number?" to the console,
+and "Sorry, that's not it!" when you supply the wrong input.
+
+
+
+RE
+--
+I imported the initial binary into Ghidra anyway, to look around.  Just
+a handful of functions to support the extraction - nothing necessarily of
+interest.
+
+Keep in mind, the file is stripped and statically linked.  This could be
+because the shell logic doesn't require many dependencies, but likely
+requires the target ELF to be statically linked as well, and we're carrying
+a compressed clib too.
+
+I initially attempted to recover the program logic via dynamic analysis.  I
+started the program, and attached to it with GDB after it showed its prompt.
+It did appear to be in the middle of the read syscall, so my intent was to feed
+it bad input, then step out to the main function to study the code disassembly.
+For some reason, I couldn't actually follow the program back that far, and some
+memory accesses were causing problems.  Plan B:  make a coredump file and
+transition back to static analysis.
+
+    > binwalk core.188218
+
+    DECIMAL       HEXADECIMAL     DESCRIPTION
+    --------------------------------------------------------------------------------
+    0             0x0             ELF, 64-bit LSB core file AMD x86-64, version 1 (SYSV)
+    736           0x2E0           ELF, 64-bit LSB executable, AMD x86-64, version 1 (GNU/Linux)
+    734736        0xB3610         Unix path: /usr/share/locale
+    ...
+
+I determined the target ELF to be the file signature at offset 0x2e0, isolated
+this data, and performed disassembly.  The 'main' function contains these
+opcodes at the possible jump to the error message:
+
+    0x00401ef8      3dcb830b00     cmp eax, 0xb83cb
+    0x00401efd      7543           jne 0x401f42
+    ...
+    0x00401f42      488d3dda100b.  lea rdi, [0x004b3023]       ; "Sorry, that's not it!"
+    0x00401f49      e842ef0100     call fcn.00420e90        (likely puts)
+
+So we should skip this jmp and proceed to the success case of the code if the
+user enters the number 0xb83cb (754635).
+
+
+> ./unpackme-upx
+What's my favorite number? 754635
+picoCTF{up><_m3_f7w_ed7b0850}

@@ -10,6 +10,7 @@ Getting started
 Launch GDB:
     > gdb <executable> # note: any arguments to the exe are supplied separately
     > gdb -p <process id> # attach to an already running process (requires root)
+    > gdb -c <core file> # debug a core file
 
     (gdb) run <argument0> <argument1> ... # Start running program
 
@@ -34,6 +35,27 @@ Remove breakpoint:
     (gdb) delete <id>
     (gdb) d <id>
     (gdb) d # deletes all breakpoints
+
+
+Signals
+-------
+gdb can print a message when the program receives a signal, optionally stop
+execution, or block the program from receiving the signal.  By default, gdb will
+stop on receipt of a typically-fatal signal, but silently pass along others
+(like: SIGALRM, SIGCHLD, ...).  If gdb stops, the program will not receive the
+signal until execution continues.
+
+Show current signal handling:
+    (gdb) info signals
+    (gdb) info signals <sig> # info on single signal
+
+Control signal behavior:
+    (gdb) handle <sig> <keywords...>
+
+    keywords are...
+    stop, nostop (should the debugger break)
+    print, noprint (should a message appear)
+    pass, nopass (should the program receive signal)
 
 
 Debugging
@@ -88,6 +110,10 @@ Alter memory:
     Example:
         (gdb) set {int}0x7fffffdead = 69 # Write the value 69 to given address
                                            as a 32-bit integer
+
+Dump memory to core file:
+    You can create a core file for static analysis or reproducible debugging:
+    (gdb) generate-core-file
 
 
 Process forks

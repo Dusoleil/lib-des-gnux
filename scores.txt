@@ -17,3 +17,5 @@ BuckeyeCTF 2021                     326         152    /505
 Killer Queen CTF 2021               4084        45     /251
 N1CTF 2021                          136         110    /601
 Metasploit Community CTF 2021       1300        22     /265     (727)
+
+picoCTF 2022                        13100       140    /7794

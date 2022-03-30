@@ -1,0 +1,48 @@
+Download this packet capture and find the flag.
+
+Category:       forensics (300 points)
+Chall author:   LT 'syreal' Jones
+Writeup author: malfurious
+
+
+
+Packet Capture Contents
+-----------------------
+We receive a pcap file.  There is a bit of unrelated traffic, but two
+conservations of interest:
+
+    1) A plaintext chat conversation between two parties on port 9001:
+
+        Hey, how do you decrypt this file again?
+        You're serious?
+        Yeah, I'm serious
+        *sigh* openssl des3 -d -salt -in file.des3 -out file.txt -k supersecretpassword123
+        Ok, great, thanks.
+        Let's use Discord next time, it's more secure.
+        C'mon, no one knows we use this program like this!
+        Whatever.
+        Hey.
+        Yeah?
+        Could you transfer the file to me again?
+        Oh great. Ok, over 9002?
+        Yeah, listening.
+        Sent it
+        Got it.
+        You're unbelievable
+
+    2) The transfer of the mentioned file, over port 9002:
+
+        00000000  53 61 6c 74 65 64 5f 5f  03 a9 15 e7 2c 0f b7 5f   Salted__ ....,.._
+        00000010  35 2a da 1e 07 31 57 0d  63 6c af 9b 67 ac 26 48   5*...1W. cl..g.&H
+        00000020  02 62 5a 94 48 b6 54 d1  ce 8a fb a4 dc ae 87 07   .bZ.H.T. ........
+
+After saving the binary file contents to a local file, decrypt it using the
+provided openssl command from the chat conservation.
+
+
+> openssl des3 -d -salt -in file.des3 -out file.txt -k supersecretpassword123
+*** WARNING : deprecated key derivation used.
+Using -iter or -pbkdf2 would be better.
+
+> cat file.txt
+picoCTF{nc_73115_411_77b05957}

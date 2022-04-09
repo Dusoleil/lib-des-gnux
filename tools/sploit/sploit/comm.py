@@ -12,7 +12,7 @@ class Comm:
     logonwrite = False
     flushonwrite = True
     readonwrite = False
-    timeout = 0.25 # seconds
+    timeout = 250 # milliseconds
 
     def __init__(self, backend):
         self.back = backend
@@ -46,11 +46,15 @@ class Comm:
 
     def readall_nonblock(self):
         try:
+            data = b''
             os.set_blocking(self.back.stdin.fileno(), False)
             poll = select.poll()
             poll.register(self.back.stdin, select.POLLIN)
-            poll.poll(self.timeout)
-            return self.readall()
+            while True:
+                poll.poll(self.timeout)
+                d = self.readall()
+                if len(d) == 0: return data
+                data += d
         finally:
             os.set_blocking(self.back.stdin.fileno(), True)
 

@@ -1,0 +1,150 @@
+clam has no more inspiration :( maybe help him get some?
+
+Category:       re (100 points)
+Chall author:   aplet123
+Writeup author: malfurious
+
+
+
+Software RE
+-----------
+We are given an executable ELF binary, and RE reveals two functions of interest:
+main and print_flag.
+
+The main function will read a line of text from input and make various
+assertions about it, exiting if any fail.  Eventually, on success, the user
+supplied string is passed to the print_flag function.  print_flag uses the data
+to derive the flag string, then prints it of course.
+
+I didn't bother reversing the print_flag function, as main gives us a seemingly
+simple puzzle to solve in order to satify its requirements.  Those requirements
+being:
+
+    - Input must be 10 characters
+    - Each character must be numeric ('0' - '9')
+    - The value of each character (digit) will increment a corresponding index
+      in an array ("count array")
+    - The final count array values must match the original input in sequence
+
+Therefore, we must supply a 10-digit number where each positional digit
+(starting from the left) is equal to the quantity of that positional value in
+the number overall.  For example, consider this potential answer:
+
+    9 0 0 0 0 0 0 0 0 0
+    ^                 ^
+    zero position     nine position
+
+The value of 9 in the zero position indicates that there must be a total of 9
+zeroes in the overall value, which there are.  However, this is not a correct
+anwser, as there is a zero in the nine position while the actual number of nines
+is 1 (the one in the zero position).
+
+
+
+Numeric puzzle
+--------------
+Let's try to fixup the previous example to arrive at the correct solution.  If
+we correct the nines position, there is now one fewer zeros, which would need
+its own correction, but there are other cascading issues as well.
+
+    9 0 0 0 0 0 0 0 0 1     # wrong number of zeroes and ones
+    8 0 0 0 0 0 0 0 0 1     # wrong number of eights, nines, ones
+    8 1 0 0 0 0 0 0 1 0     # wrong number of zeroes and ones
+    ...
+
+Not 100% confident that there even was a solution, the team decided to try to
+rule out sets of potential solutions by reasoning our way to a contradiction
+from some given starting point (as you can see above, for the example of
+zero->nine).
+
+We decided to start by varying the value of zero, starting with zero set to
+nine.  The reason for this being that maximizing the number of zeroes in the
+number should in theory minimize the additional values we need to fit in the
+remaining digits.  If the nines position has a value of 1, for example, then
+that would imply that there must be nine of some other value elsewhere in the
+answer.  Furthermore, a two in the nines position is impossible, since there
+aren't enough places to satify the requirements imposed by two floating nine
+digits.
+
+Using this process, we eliminated all solutions where the zero position is
+9, 8, or 7, however converged on a possible solution for zero->six.
+
+    6 0 0 0 0 0 0 0 0 0     # wrong zeroes, sixes
+    6 0 0 0 0 0 1 0 0 0     # wrong zeroes, ones
+    6 1 0 0 0 0 1 0 0 0     # wrong zeroes, ones
+    6 2 0 0 0 0 1 0 0 0     # wrong zeroes, ones, twos
+    6 2 1 0 0 0 1 0 0 0     # all positions correct!
+
+It is unknown to the team whether there are other correct solutions.  Since
+this string is used to derive the flag, it's likely that this is the only one.
+However, if the other solutions (if they exist) are somehow congruent under the
+logic of the print_flag function, then the puzzle should still hold.
+
+
+
+Solution
+--------
+> ./uninspired
+there's no more inspiration :(
+6210001000
+yay I'm inspired now, have a flag :)
+actf{ten_digit_numbers_are_very_inspiring}
+
+
+
+Decompiled main function (C/Ghidra)
+-----------------------------------
+undefined8 main(void)
+{
+  size_t str_len;
+  long idx;
+  undefined8 retval;
+  char *inp_ptr;
+  char user_input [10];
+  char user_input_end [6];
+  int buffer [4];
+  char c;
+
+  inp_ptr = user_input;
+  puts("there\'s no more inspiration :(");
+  fgets(user_input,0x10,stdin);
+  str_len = strcspn(user_input,"\n");
+                    /* Read user input, fixup newline/null termination
+                       Length of string must == 10 */
+  user_input[(int)str_len] = '\0';
+  if ((int)str_len == 10) {
+                    /* zero buffer */
+    buffer = (undefined  [16])0x0;
+    do {
+                    /* foreach char in user_input */
+      c = *inp_ptr;
+      if (9 < (byte)(c - 0x30U)) {
+                    /* characters must be numeric (0-9) */
+        puts("I don\'t like your inspiration :(");
+        return 1;
+      }
+      inp_ptr = inp_ptr + 1;
+                    /* increment the selected position in 'buffer' */
+      buffer[(char)(c - 0x30U)] = buffer[(char)(c - 0x30U)] + 1;
+    } while (inp_ptr != user_input_end);
+    idx = 0;
+    do {
+                    /* foreach char in user_input */
+      if (buffer[idx] != user_input[idx] + -0x30) {
+                    /* buffer indicies must match input string values */
+        puts("that\'s not good inspiration :(");
+        return 1;
+      }
+      idx = idx + 1;
+    } while (idx != 10);
+    puts("yay I\'m inspired now, have a flag :)");
+    print_flag(user_input);
+    retval = 0;
+  }
+  else {
+                    /* strlen != 10 */
+    puts("that\'s not very inspiring :(");
+    retval = 1;
+  }
+  return retval;
+}

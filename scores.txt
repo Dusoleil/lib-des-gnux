@@ -19,3 +19,4 @@ N1CTF 2021                          136         110    /601
 Metasploit Community CTF 2021       1300        22     /265     (727)
 
 picoCTF 2022                        13100       140    /7794
+angstromCTF 2022                    2111        80     /1179    (1319)

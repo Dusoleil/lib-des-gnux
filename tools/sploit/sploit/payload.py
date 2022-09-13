@@ -1,75 +1,75 @@
 from sploit.arch import arch, itob
 from sploit.mem import Symtbl
 
-class Payload(Symtbl):
+class Payload:
     MAGIC = b'\xef'
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self = self._namesp
         self.payload = b''
+        self.sym = Symtbl(**kwargs)
         self.ctrs = {}
 
     def __len__(self):
-        return len(self._namesp.payload)
+        return len(self.payload)
 
     def __call__(self, badbytes=b''):
-        self = self._namesp
         found = [ hex(x) for x in set(self.payload).intersection(badbytes) ]
         if len(found) > 0:
             raise Exception(f'Payload: bad bytes in content: {found}')
         return self.payload
 
-    def __name(self, kind):
-        self = self._namesp
+    def _name(self, kind, sym):
+        if sym is not None: return sym
         try: ctr = self.ctrs[kind]
         except: ctr = 0
         self.ctrs[kind] = ctr + 1
         return f'{kind}_{ctr}'
 
-    def __append(self, value, sym):
-        setattr(self, sym, len(self))
-        self._namesp.payload += value
+    def _append(self, value, sym):
+        setattr(self.sym.map(0), sym, len(self))
+        self.payload += value
         return self
 
-    def __prepend(self, value, sym):
-        self.adjust(len(value))
-        setattr(self, sym, 0)
-        self._namesp.payload = value + self._namesp.payload
+    def _prepend(self, value, sym):
+        self.sym.adjust(len(value))
+        setattr(self.sym.map(0), sym, 0)
+        self.payload = value + self.payload
         return self
 
-    def bin(self, value, sym=None):
-        return self.__append(value, sym or self.__name('bin'))
+    def bin(self, *values, sym=None):
+        return self._append(b''.join(values), sym=self._name('bin', sym))
 
-    def str(self, value, sym=None):
-        return self.bin(value.encode()+b'\x00', sym or self.__name('str'))
+    def str(self, *values, sym=None):
+        values = [ v.encode() + b'\x00' for v in values ]
+        return self.bin(*values, sym=self._name('str', sym))
 
-    def int(self, value, sym=None, signed=False):
-        return self.bin(itob(value, signed=signed), sym or self.__name('int'))
+    def int(self, *values, sym=None, signed=False):
+        values = [ itob(v, signed=signed) for v in values ]
+        return self.bin(*values, sym=self._name('int', sym))
 
-    def ret(self, value, sym=None):
-        return self.int(value, sym or self.__name('ret'))
+    def ret(self, *values, sym=None):
+        return self.int(*values, sym=self._name('ret', sym))
 
-    def sbp(self, value=None, sym=None):
-        if value is None:
-            return self.rep(self.MAGIC, arch.wordsize, sym or self.__name('sbp'))
-        return self.int(value, sym or self.__name('sbp'))
+    def sbp(self, *values, sym=None):
+        if len(values) == 0:
+            return self.rep(self.MAGIC, arch.wordsize, sym=self._name('sbp', sym))
+        return self.int(*values, sym=self._name('sbp', sym))
 
     def rep(self, value, size, sym=None):
-        return self.bin(self.__rep_helper(value, size), sym or self.__name('rep'))
+        return self.bin(self._rep_helper(value, size), sym=self._name('rep', sym))
 
     def pad(self, size, value=None, sym=None):
-        return self.bin(self.__pad_helper(size, value), sym or self.__name('pad'))
+        return self.bin(self._pad_helper(size, value), sym=self._name('pad', sym))
 
     def pad_front(self, size, value=None, sym=None):
-        return self.__prepend(self.__pad_helper(size, value), sym or self.__name('pad'))
+        return self._prepend(self._pad_helper(size, value), sym=self._name('pad', sym))
 
-    def __rep_helper(self, value, size, *, explain=''):
+    def _rep_helper(self, value, size, *, explain=''):
         if size < 0:
             raise Exception(f'Payload: {explain}rep: available space is negative')
         if (size := size / len(value)) != int(size):
             raise Exception(f'Payload: {explain}rep: element does not divide the space evenly')
         return value * int(size)
 
-    def __pad_helper(self, size, value):
-        return self.__rep_helper(value or arch.nopcode, size - len(self), explain='pad: ')
+    def _pad_helper(self, size, value):
+        return self._rep_helper(value or arch.nopcode, size - len(self), explain='pad: ')

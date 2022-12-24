@@ -1,17 +1,31 @@
-.PHONY: all
+LDFLAGS?=
+FORMAT?=elf64
+CODE?=examples/shell64.asm
+GREP=00|0a
 
-all: shell32.elf shell64.elf
-	@objdump -d shell32.elf | ./shelltool.py
-	@objdump -d shell64.elf | ./shelltool.py
+.PHONY: all elf disas
 
-shell32.o: shell32.asm
-	nasm -f elf shell32.asm -o shell32.o
+# Format bytecode as an escaped string, highlight bad bytes
+all: code.bin
+	@xxd -i -c 16 <code.bin \
+		| sed 's/,//g;s/ 0/\\/g;s/^ */"/g;s/$$/"/g' \
+		| grep --color=always -E '$(GREP)|$$'
 
-shell32.elf: shell32.o
-	ld -melf_i386 shell32.o -o shell32.elf
+elf: code.o
+	ld $(LDFLAGS) code.o -o code.elf
 
-shell64.o: shell64.asm
-	nasm -f elf64 shell64.asm -o shell64.o
+disas: code.o
+	@objdump -d code.o \
+		| grep --color=always -E '$(GREP)|$$'
 
-shell64.elf: shell64.o
-	ld shell64.o -o shell64.elf
+code.bin: code.o
+	objcopy -O binary code.o code.bin
+
+code.o: code.asm
+	nasm -f '$(FORMAT)' code.asm -o code.o
+
+code.asm:
+	cp '$(CODE)' code.asm
+
+
+# -melf_i386

